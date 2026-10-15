@@ -145,12 +145,17 @@ export const relayAdapter: Adapter = {
   defaultBaseUrl: '',
 
   async test(ctx) {
+    const list = await this.listModels!(ctx);
+    return list.length ? `连接成功，这个 key 能看到 ${list.length} 个模型` : '连接成功';
+  },
+
+  async listModels(ctx) {
     const data = await httpJson<any>(joinUrl(base(ctx), 'models'), { headers: headers(ctx), timeoutMs: 20_000 }).catch((e: any) => {
       if (/HTTP 40[13]/.test(String(e?.message))) throw new AdapterError(`key 无效或没有权限：${e.message}`);
       throw e;
     });
     const list: any[] = Array.isArray(data?.data) ? data.data : [];
-    return list.length ? `连接成功，这个 key 能看到 ${list.length} 个模型` : '连接成功';
+    return [...new Set(list.map((m) => String(m?.id ?? '')).filter(Boolean))].sort();
   },
 
   async submit(ctx, req) {

@@ -1640,6 +1640,78 @@ input.short {
   background: rgba(248, 113, 113, 0.08);
   color: var(--bad);
 }
+.mm-add-label {
+  font-size: 11.5px;
+  padding: 2px 6px 0;
+}
+.mm-table td.nowrap {
+  white-space: nowrap;
+}
+
+/* 拉取到的模型列表 */
+.pull {
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.pull-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.pull-head input {
+  flex: 1;
+  min-width: 0;
+}
+.pull-head .muted {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.pull-list {
+  max-height: 300px;
+  overflow: auto;
+  padding: 4px 0;
+}
+.pull-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.pull-item:hover {
+  background: var(--surface-3);
+}
+.pull-item.dim {
+  opacity: 0.45;
+  cursor: default;
+}
+.pull-id {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pull-note {
+  color: var(--warn);
+  font-size: 11.5px;
+}
+.pull-item .tag {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: var(--surface-4);
+  color: var(--text-2);
+}
+.pull-item .muted {
+  font-size: 11.5px;
+  min-width: 72px;
+  text-align: right;
+}
 .mm-models-head {
   display: flex;
   align-items: center;
@@ -1655,6 +1727,7 @@ input.short {
   font-size: 12.5px;
 }
 .mm-table th {
+  white-space: nowrap;
   text-align: left;
   color: var(--text-3);
   font-weight: 400;

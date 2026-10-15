@@ -1,6 +1,7 @@
 // 服务商注册表：读写 config/providers.json，把配置拼成界面要的模型列表。
 // 新增一种适配器：在 ADAPTERS 里加一行。
-import type { ModelInfo, ProviderModelConfig, ProviderType, ProviderView } from '../../shared/types.js';
+import type { ModelInfo, ProviderModelConfig, ProviderType, ProviderView, RemoteModelGuess } from '../../shared/types.js';
+import { guessModel } from './guess.js';
 import { decrypt, encrypt, hint } from '../secrets.js';
 import { getPreset } from '../presets.js';
 import { newId, nowIso, paths, readJson, writeJson } from '../storage.js';
@@ -240,6 +241,57 @@ export async function deleteProvider(id: string) {
   const f = await loadProviders();
   f.providers = f.providers.filter((p) => p.id !== id);
   await save();
+}
+
+/** 拉这个 key 能用的模型列表，顺便按名字猜好类型和接口格式 */
+export async function remoteModels(id: string): Promise<RemoteModelGuess[]> {
+  const p = await getProvider(id);
+  const adapter = ADAPTERS[p.type];
+  if (!adapter.listModels) throw new Error(`「${adapter.label}」类型的服务商不支持拉取模型列表，请手动添加`);
+  const ids = await adapter.listModels({ provider: p, apiKey: apiKeyOf(p) });
+  return ids.map(guessModel);
+}
+
+/**
+ * 试一下单个模型：
+ * - 文本模型真的发一句话（几乎不花钱），能确认模型 ID、分组权限、接口格式都对；
+ * - 图片 / 视频模型生成一次会扣费，只核对模型 ID 在不在这个 key 的模型列表里。
+ */
+export async function testModel(id: string, mid: string): Promise<{ ok: boolean; message: string }> {
+  const p = await getProvider(id);
+  const model = p.models.find((m) => m.id === mid);
+  if (!model) throw new Error('找不到这个模型，请先保存');
+  if (!model.remoteModel) return { ok: false, message: '还没有填模型 ID' };
+  const adapter = ADAPTERS[p.type];
+  const ctx = { provider: p, model, apiKey: apiKeyOf(p) };
+  if (p.type === 'mock') return { ok: true, message: '演示模型，随时可用' };
+
+  let listed: boolean | undefined;
+  if (adapter.listModels) {
+    try {
+      listed = (await adapter.listModels(ctx)).includes(model.remoteModel);
+    } catch {
+      listed = undefined; // 有的中转站不开放模型列表，不影响下面真正调用
+    }
+  }
+
+  if (model.capability === 'text') {
+    try {
+      const started = Date.now();
+      const r = await adapter.submit(ctx, { capability: 'text', mode: 'chat', prompt: '请只回复两个字母：OK', refs: [], params: { temperature: 0 } });
+      const text = r.kind === 'done' ? r.outputs.find((o) => o.kind === 'text')?.text?.trim() : '';
+      const secs = ((Date.now() - started) / 1000).toFixed(1);
+      return { ok: true, message: `能用，${secs} 秒回复${text ? `：「${text.slice(0, 40)}」` : ''}` };
+    } catch (e: any) {
+      const hint = listed === false ? `（这个 key 的模型列表里也没有「${model.remoteModel}」，多半是 ID 拼错了或分组没开通）` : '';
+      return { ok: false, message: `${e?.message || e}${hint}` };
+    }
+  }
+
+  const costNote = '图片 / 视频模型试一次会扣费，所以没有真的生成，第一次用请先生成一条短的';
+  if (listed === true) return { ok: true, message: `模型列表里有这个 ID。${costNote}` };
+  if (listed === false) return { ok: false, message: `这个 key 的模型列表里没有「${model.remoteModel}」：可能 ID 拼错了，或这个分组没开通这个模型` };
+  return { ok: true, message: `这家服务商查不了模型列表，没法核对 ID。${costNote}` };
 }
 
 export async function testProvider(id: string): Promise<{ ok: boolean; message: string }> {

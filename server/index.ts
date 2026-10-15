@@ -23,7 +23,7 @@ import {
   updateEpisode,
   updateProject,
 } from './projects.js';
-import { ADAPTERS, deleteProvider, listModels, listProviderViews, testProvider, upsertProvider } from './providers/index.js';
+import { ADAPTERS, deleteProvider, listModels, listProviderViews, remoteModels, testModel, testProvider, upsertProvider } from './providers/index.js';
 import { cancelJob, enqueue, events, getJob, listJobs, recover, resumeJob, runQuickText } from './queue.js';
 import { addAssets, deleteAsset, listAssets, renameAsset, type AssetInput } from './assets.js';
 import { PROJECT_ROOT, WORKSPACE, ensureDir, kindOfFile, newId, paths, rel } from './storage.js';
@@ -73,6 +73,11 @@ app.delete('/api/providers/:id', async (req) => {
   return { ok: true };
 });
 app.post('/api/providers/:id/test', async (req) => testProvider((req.params as any).id));
+app.get('/api/providers/:id/remote-models', async (req) => remoteModels((req.params as any).id));
+app.post('/api/providers/:id/models/:mid/test', async (req) => {
+  const { id, mid } = req.params as any;
+  return testModel(id, mid);
+});
 
 // —— 项目、剧集、画布 ——
 app.get('/api/projects', async () => listProjects());

@@ -60,6 +60,8 @@ export interface Adapter {
   defaultBaseUrl: string;
   /** 测试 key 和地址能不能用，成功返回一句说明，失败抛错 */
   test(ctx: Omit<AdapterContext, 'model'>): Promise<string>;
+  /** 这个 key 能用的模型 ID 列表（不支持就不实现） */
+  listModels?(ctx: Omit<AdapterContext, 'model'>): Promise<string[]>;
   submit(ctx: AdapterContext, req: PreparedRequest): Promise<SubmitResult>;
   poll?(ctx: AdapterContext, remoteId: string): Promise<PollResult>;
   cancel?(ctx: AdapterContext, remoteId: string): Promise<void>;

@@ -86,6 +86,17 @@ export interface ProviderModelConfig {
   enabled: boolean;
 }
 
+/** 从服务商拉到的一个模型，以及按名字猜出来的默认设置 */
+export interface RemoteModelGuess {
+  remoteModel: string;
+  capability: Capability;
+  protocol?: RelayProtocol;
+  preset: string;
+  /** false = 向量、语音识别这类这里用不上的模型 */
+  supported: boolean;
+  note?: string;
+}
+
 /** 给界面看的服务商（key 只露末 4 位） */
 export interface ProviderView {
   id: string;

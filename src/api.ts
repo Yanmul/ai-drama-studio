@@ -10,6 +10,7 @@ import type {
   Project,
   ProjectSummary,
   ProviderView,
+  RemoteModelGuess,
 } from '../shared/types';
 
 async function call<T>(method: string, url: string, body?: unknown, keepalive = false): Promise<T> {
@@ -35,6 +36,8 @@ export const api = {
     id ? call<ProviderView>('PUT', `/api/providers/${id}`, body) : call<ProviderView>('POST', '/api/providers', body),
   deleteProvider: (id: string) => call('DELETE', `/api/providers/${id}`),
   testProvider: (id: string) => call<{ ok: boolean; message: string }>('POST', `/api/providers/${id}/test`),
+  remoteModels: (id: string) => call<RemoteModelGuess[]>('GET', `/api/providers/${id}/remote-models`),
+  testModel: (id: string, mid: string) => call<{ ok: boolean; message: string }>('POST', `/api/providers/${id}/models/${mid}/test`),
 
   projects: () => call<Project[]>('GET', '/api/projects'),
   home: () => call<ProjectSummary[]>('GET', '/api/home'),

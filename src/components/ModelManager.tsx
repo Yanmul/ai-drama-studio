@@ -1,7 +1,7 @@
 // 模型管理：添加服务商（火山引擎 / 中转站 / 演示）、填 key、测试、管理每个服务商下的模型
 import { Fragment, useEffect, useState } from 'react';
-import { CheckCircle2, Plus, Trash2, X, XCircle } from 'lucide-react';
-import type { Capability, CustomTemplate, ProviderModelConfig, ProviderType, ProviderView, RelayProtocol } from '../../shared/types';
+import { CheckCircle2, CloudDownload, FlaskConical, Loader2, Plus, Trash2, X, XCircle } from 'lucide-react';
+import type { Capability, CustomTemplate, ProviderModelConfig, ProviderType, ProviderView, RelayProtocol, RemoteModelGuess } from '../../shared/types';
 import { api } from '../api';
 import { useApp } from '../context';
 import { fmtTime } from '../lib';
@@ -33,6 +33,32 @@ const PROTOCOLS: { id: RelayProtocol; label: string }[] = [
 ];
 const DEFAULT_PRESET: Record<Capability, string> = { text: 'chat', image: 'seedream', video: 'seedance', audio: 'mock-audio' };
 
+/** 快速添加：兼容 OpenAI 格式的常见服务商，地址填好，只差 key。模型 ID 以各家文档为准，也可以添加后点「拉取模型列表」 */
+const QUICK_ADD: { label: string; name: string; baseUrl: string; models: { name: string; remoteModel: string }[] }[] = [
+  {
+    label: 'DeepSeek',
+    name: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    models: [
+      { name: 'DeepSeek 对话', remoteModel: 'deepseek-chat' },
+      { name: 'DeepSeek 推理', remoteModel: 'deepseek-reasoner' },
+    ],
+  },
+  { label: '通义千问', name: '通义千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: [] },
+  { label: 'Kimi', name: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1', models: [] },
+];
+
+const fromGuess = (g: RemoteModelGuess): ProviderModelConfig => ({
+  id: '',
+  name: g.remoteModel,
+  capability: g.capability,
+  remoteModel: g.remoteModel,
+  preset: g.preset,
+  protocol: g.protocol,
+  // 自定义模板还没填，先不启用，免得在面板里选到一个跑不通的模型
+  enabled: g.supported && g.protocol !== 'custom',
+});
+
 const toDraft = (p: ProviderView): Draft => ({
   id: p.id,
   name: p.name,
@@ -56,6 +82,11 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
   const [openTpl, setOpenTpl] = useState<string | null>(null);
+  // 拉取到的模型列表（勾选后加进表格）
+  const [pull, setPull] = useState<{ items: RemoteModelGuess[]; picked: Set<string>; q: string } | null>(null);
+  const [pulling, setPulling] = useState(false);
+  // 每个模型「试一下」的结果，按模型 id
+  const [modelTests, setModelTests] = useState<Record<string, { ok?: boolean; message: string; loading?: boolean }>>({});
 
   const load = async (selectId?: string) => {
     const ps = await api.providers();
@@ -69,12 +100,13 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
     api.presets().then(setPresets);
   }, []);
 
-  const add = (type: ProviderType) => {
+  const add = (type: ProviderType, quick?: (typeof QUICK_ADD)[number]) => {
+    setPull(null);
     setDraft({
       id: null,
-      name: type === 'relay' ? '新中转站' : type === 'volcengine' ? '火山引擎' : '演示模型',
+      name: quick?.name || (type === 'relay' ? '新中转站' : type === 'volcengine' ? '火山引擎' : '演示模型'),
       type,
-      baseUrl: type === 'volcengine' ? 'https://ark.cn-beijing.volces.com/api/v3' : '',
+      baseUrl: quick?.baseUrl || (type === 'volcengine' ? 'https://ark.cn-beijing.volces.com/api/v3' : ''),
       apiKey: '',
       clearKey: false,
       keyHint: '',
@@ -82,7 +114,7 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
       concurrency: 2,
       refMode: 'base64',
       publicBaseUrl: '',
-      models: [],
+      models: (quick?.models || []).map((m) => ({ ...fromGuess({ remoteModel: m.remoteModel, capability: 'text', protocol: 'openai-chat', preset: 'chat', supported: true }), name: m.name })),
     });
   };
 
@@ -109,7 +141,8 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
     });
   };
 
-  const save = async (): Promise<string | null> => {
+  /** quiet：拉取、试一下之前顺手保存，不弹「已保存」 */
+  const save = async (quiet = false): Promise<ProviderView | null> => {
     if (!draft) return null;
     setSaving(true);
     try {
@@ -123,8 +156,8 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
       const saved = await api.saveProvider(draft.id, body);
       await load(saved.id);
       refreshModels();
-      toast('已保存');
-      return saved.id;
+      if (!quiet) toast('已保存');
+      return saved;
     } catch (e: any) {
       toast(e.message, 'error');
       return null;
@@ -134,11 +167,49 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
   };
 
   const test = async () => {
-    const id = await save();
-    if (!id) return;
-    const r = await api.testProvider(id);
+    const saved = await save();
+    if (!saved) return;
+    const r = await api.testProvider(saved.id);
     toast(r.message, r.ok ? 'info' : 'error');
-    load(id);
+    load(saved.id);
+  };
+
+  // 先保存（key 要存到后端才能用），再拉这个 key 能用的模型
+  const pullModels = async () => {
+    const saved = await save(true);
+    if (!saved) return;
+    setPulling(true);
+    try {
+      const items = await api.remoteModels(saved.id);
+      if (!items.length) return toast('这个 key 没有返回任何模型，请手动添加', 'error');
+      setPull({ items, picked: new Set(), q: '' });
+    } catch (e: any) {
+      toast(`拉取失败：${e.message}`, 'error');
+    } finally {
+      setPulling(false);
+    }
+  };
+
+  const addPicked = () => {
+    if (!draft || !pull) return;
+    const added = pull.items.filter((g) => pull.picked.has(g.remoteModel)).map(fromGuess);
+    set({ models: [...draft.models, ...added] });
+    setPull(null);
+    toast(`加了 ${added.length} 个模型，类型和接口格式是按名字猜的，核对一下再点「保存」`);
+  };
+
+  // 试一下单个模型：先保存，拿到保存后的模型 id 再测
+  const testOne = async (i: number) => {
+    const saved = await save(true);
+    const mid = saved?.models[i]?.id;
+    if (!saved || !mid) return;
+    setModelTests((t) => ({ ...t, [mid]: { loading: true, message: '测试中…' } }));
+    try {
+      const r = await api.testModel(saved.id, mid);
+      setModelTests((t) => ({ ...t, [mid]: r }));
+    } catch (e: any) {
+      setModelTests((t) => ({ ...t, [mid]: { ok: false, message: e.message } }));
+    }
   };
 
   const remove = async () => {
@@ -164,7 +235,14 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
         <div className="mm">
           <div className="mm-list">
             {providers.map((p) => (
-              <button key={p.id} className={`mm-item ${draft?.id === p.id ? 'on' : ''}`} onClick={() => setDraft(toDraft(p))}>
+              <button
+                key={p.id}
+                className={`mm-item ${draft?.id === p.id ? 'on' : ''}`}
+                onClick={() => {
+                  setPull(null);
+                  setDraft(toDraft(p));
+                }}
+              >
                 <span className={`dot ${p.enabled && (p.type === 'mock' || p.keyHint) ? 'ok' : ''}`} />
                 <span className="mm-name">{p.name}</span>
                 <span className="muted">{TYPE_LABEL[p.type]}</span>
@@ -180,6 +258,14 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
               <button onClick={() => add('mock')}>
                 <Plus size={13} /> 演示
               </button>
+            </div>
+            <div className="mm-add-label muted">快速添加（地址已填好）</div>
+            <div className="mm-add">
+              {QUICK_ADD.map((q) => (
+                <button key={q.label} onClick={() => add('relay', q)}>
+                  <Plus size={13} /> {q.label}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -252,10 +338,16 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                 <b>模型</b>
                 <span className="muted">模型 ID 以厂商控制台为准；单价只用来估算花费</span>
                 <span className="spacer" />
+                {draft.type === 'relay' && (
+                  <button className="ghost" onClick={pullModels} disabled={saving || pulling} title="保存后，列出这个 key 能用的全部模型，勾选加入">
+                    {pulling ? <Loader2 size={13} className="spin" /> : <CloudDownload size={13} />} 拉取模型列表
+                  </button>
+                )}
                 <button className="ghost" onClick={addModel}>
-                  <Plus size={13} /> 添加模型
+                  <Plus size={13} /> 手动添加
                 </button>
               </div>
+              {pull && <PullPicker pull={pull} existing={draft.models.map((m) => m.remoteModel)} onChange={setPull} onAdd={addPicked} />}
               <table className="mm-table">
                 <thead>
                   <tr>
@@ -337,12 +429,25 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                             <option value="per_image">/张</option>
                           </select>
                         </td>
-                        <td>
-                          <button className="icon" onClick={() => set({ models: draft.models.filter((_, j) => j !== i) })}>
+                        <td className="nowrap">
+                          <button className="icon" title="试一下：文本模型发一句话；图片 / 视频模型只核对 ID，不扣费" onClick={() => testOne(i)} disabled={saving}>
+                            <FlaskConical size={14} />
+                          </button>
+                          <button className="icon" title="删除" onClick={() => set({ models: draft.models.filter((_, j) => j !== i) })}>
                             <Trash2 size={14} />
                           </button>
                         </td>
                       </tr>
+                      {m.id && modelTests[m.id] && (
+                        <tr>
+                          <td colSpan={8}>
+                            <div className={`test-result ${modelTests[m.id].loading ? '' : modelTests[m.id].ok ? 'ok' : 'bad'}`}>
+                              {modelTests[m.id].loading ? <Loader2 size={14} className="spin" /> : modelTests[m.id].ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+                              {m.name || m.remoteModel}：{modelTests[m.id].message}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
                       {openTpl === `${i}` && m.protocol === 'custom' && (
                         <tr>
                           <td colSpan={8}>
@@ -363,13 +468,75 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                 <button className="ghost" onClick={test} disabled={saving}>
                   保存并测试连接
                 </button>
-                <button className="primary" onClick={save} disabled={saving}>
+                <button className="primary" onClick={() => save()} disabled={saving}>
                   保存
                 </button>
               </div>
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+const CAP_OF_GUESS = (g: RemoteModelGuess) => (g.supported ? CAP_LABEL[g.capability] : '用不上');
+const PROTOCOL_LABEL = (id?: RelayProtocol) => PROTOCOLS.find((p) => p.id === id)?.label || '';
+
+/** 拉取到的模型列表：搜索、勾选、加入表格 */
+function PullPicker({
+  pull,
+  existing,
+  onChange,
+  onAdd,
+}: {
+  pull: { items: RemoteModelGuess[]; picked: Set<string>; q: string };
+  existing: string[];
+  onChange: (p: { items: RemoteModelGuess[]; picked: Set<string>; q: string } | null) => void;
+  onAdd: () => void;
+}) {
+  const q = pull.q.trim().toLowerCase();
+  const shown = pull.items.filter((g) => !q || g.remoteModel.toLowerCase().includes(q));
+  const toggle = (id: string) => {
+    const picked = new Set(pull.picked);
+    if (picked.has(id)) picked.delete(id);
+    else picked.add(id);
+    onChange({ ...pull, picked });
+  };
+  return (
+    <div className="pull">
+      <div className="pull-head">
+        <input autoFocus placeholder={`搜索 ${pull.items.length} 个模型，比如 deepseek、seedance、image`} value={pull.q} onChange={(e) => onChange({ ...pull, q: e.target.value })} />
+        <span className="muted">已选 {pull.picked.size} 个</span>
+        <span className="spacer" />
+        <button className="ghost" onClick={() => onChange(null)}>
+          取消
+        </button>
+        <button className="primary" disabled={!pull.picked.size} onClick={onAdd}>
+          加入选中的
+        </button>
+      </div>
+      <div className="pull-list">
+        {shown.map((g) => {
+          const added = existing.includes(g.remoteModel);
+          return (
+            <label key={g.remoteModel} className={`pull-item ${!g.supported || added ? 'dim' : ''}`} title={g.note}>
+              <input type="checkbox" disabled={!g.supported || added} checked={pull.picked.has(g.remoteModel)} onChange={() => toggle(g.remoteModel)} />
+              <span className="pull-id">{g.remoteModel}</span>
+              <span className="spacer" />
+              {added ? (
+                <span className="muted">已添加</span>
+              ) : (
+                <>
+                  {g.note && g.supported && <span className="pull-note">{g.note}</span>}
+                  <span className="tag">{CAP_OF_GUESS(g)}</span>
+                  {g.supported && <span className="muted">{PROTOCOL_LABEL(g.protocol)}</span>}
+                </>
+              )}
+            </label>
+          );
+        })}
+        {shown.length === 0 && <div className="muted pad">没有匹配的模型</div>}
       </div>
     </div>
   );
