@@ -260,6 +260,28 @@ textarea {
   color: var(--text-3);
 }
 
+/* 可输入也可下拉选的框 */
+.combo {
+  position: relative;
+  display: block;
+}
+.combo input {
+  width: 100%;
+  padding-right: 24px !important;
+}
+.combo-arrow {
+  position: absolute;
+  right: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  cursor: pointer;
+}
+.select-label.mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+}
+
 /* —— 确认框 / 输入框（替代浏览器自带的 confirm / prompt） —— */
 .dialog-mask {
   z-index: 200;

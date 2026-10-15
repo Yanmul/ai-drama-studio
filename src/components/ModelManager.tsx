@@ -3,7 +3,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { CheckCircle2, ChevronDown, CloudDownload, FlaskConical, LayoutList, Loader2, Plus, Trash2, X, XCircle } from 'lucide-react';
 import { confirmDialog } from './Dialog';
 import { Popover } from './Popover';
-import { Select } from './Select';
+import { ComboInput, Select } from './Select';
 import type { Capability, CustomTemplate, ProviderModelConfig, ProviderType, ProviderView, RelayProtocol, RemoteModelGuess } from '../../shared/types';
 import { api } from '../api';
 import { useApp } from '../context';
@@ -98,6 +98,17 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
   // cap = 这一批要加成什么类型，先选类型再勾选，不按名字猜
   const [pull, setPull] = useState<PullState | null>(null);
   const [addMenu, setAddMenu] = useState(false);
+  // 每个中转站能用的模型 ID（给表格里的「模型 ID」下拉选）；null = 正在获取或获取失败
+  const [remoteIds, setRemoteIds] = useState<Record<string, string[] | null>>({});
+  const loadRemoteIds = (force = false) => {
+    const id = draft?.id;
+    if (!draft || draft.type !== 'relay' || !id || (!force && id in remoteIds)) return;
+    setRemoteIds((r) => ({ ...r, [id]: null }));
+    api
+      .remoteModels(id)
+      .then((list) => setRemoteIds((r) => ({ ...r, [id]: list.filter((g) => g.supported).map((g) => g.remoteModel) })))
+      .catch(() => setRemoteIds((r) => ({ ...r, [id]: [] }))); // 拿不到（key 不对、中转站不开放列表）就只能手填
+  };
   const [pulling, setPulling] = useState(false);
   // 每个模型「试一下」的结果，按模型 id
   const [modelTests, setModelTests] = useState<Record<string, { ok?: boolean; message: string; loading?: boolean }>>({});
@@ -155,6 +166,11 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
       else if (!draft.apiKey) delete body.apiKey;
       delete body.clearKey;
       const saved = await api.saveProvider(draft.id, body);
+      // key 或地址可能改了：清掉这个服务商的模型列表缓存，下次点「模型 ID」时重新获取
+      setRemoteIds((r) => {
+        const { [saved.id]: _, ...rest } = r;
+        return rest;
+      });
       await load(saved.id);
       refreshModels();
       if (!quiet) toast('已保存');
@@ -182,6 +198,7 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
     setPulling(true);
     try {
       const items = await api.remoteModels(saved.id);
+      setRemoteIds((r) => ({ ...r, [saved.id]: items.filter((g) => g.supported).map((g) => g.remoteModel) }));
       if (!items.length) return toast('这个 key 没有返回任何模型，请手动添加', 'error');
       setPull({ items, picked: new Set(), q: '', cap: null });
     } catch (e: any) {
@@ -412,7 +429,22 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                           />
                         </td>
                         <td>
-                          <input value={m.remoteModel} placeholder="厂商那边的模型名" onChange={(e) => setModel(i, { remoteModel: e.target.value })} />
+                          {draft.type === 'relay' && draft.id ? (
+                            // 中转站：可以从这个 key 能用的模型里下拉选，也能手填；选中后显示名空着就一起填上
+                            <ComboInput
+                              value={m.remoteModel}
+                              options={remoteIds[draft.id] ?? null}
+                              loading={draft.id in remoteIds && remoteIds[draft.id] === null}
+                              placeholder="点一下从列表选，或手填"
+                              onFocus={() => loadRemoteIds()}
+                              onChange={(v) => setModel(i, { remoteModel: v })}
+                              onPick={(v) => {
+                                if (!m.name.trim() || m.name === m.remoteModel) setModel(i, { name: v });
+                              }}
+                            />
+                          ) : (
+                            <input value={m.remoteModel} placeholder="厂商那边的模型名" onChange={(e) => setModel(i, { remoteModel: e.target.value })} />
+                          )}
                         </td>
                         {draft.type === 'relay' && (
                           <td>
