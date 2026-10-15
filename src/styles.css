@@ -1707,9 +1707,14 @@ input.short {
   background: var(--surface-4);
   color: var(--text-2);
 }
+.pull-item .pull-cap {
+  font-size: 11.5px;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
 .pull-item .muted {
   font-size: 11.5px;
-  min-width: 72px;
+  min-width: 140px;
   text-align: right;
 }
 .mm-models-head {

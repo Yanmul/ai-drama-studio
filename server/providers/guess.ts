@@ -15,8 +15,8 @@ export function guessModel(remoteModel: string): RemoteModelGuess {
 
   // —— 视频 ——
   if (has(id, /seedance/)) return { ...base, capability: 'video', protocol: 'ark-video', preset: 'seedance', supported: true };
-  if (has(id, /video|veo|sora|kling|hailuo|vidu|runway|pika|wan.*(t2v|i2v)|t2v|i2v/)) {
-    return { ...base, capability: 'video', protocol: 'custom', preset: 'generic-video', supported: true, note: '视频接口各家不一样，要先填「自定义模板」' };
+  if (has(id, /video|veo|sora|kling|hailuo|minimax-h|vidu|runway|pika|happyhorse|^wan-|wan.*(t2v|i2v)|t2v|i2v/)) {
+    return { ...base, capability: 'video', protocol: 'openai-videos', preset: 'openai-videos', supported: true };
   }
 
   // —— 图片 ——

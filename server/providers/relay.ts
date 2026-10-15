@@ -2,6 +2,8 @@
 // 各家中转站接口不完全一样，所以每个模型单独选「接口格式」：
 //   openai-chat    文本，POST {base}/chat/completions
 //   openai-images  生图，POST {base}/images/generations；有参考图时走 {base}/images/edits
+//   openai-videos  视频，OpenAI 风格统一视频接口：POST {base}/videos 提交，GET {base}/videos/{id} 查询，
+//                  GET {base}/videos/{id}/content 下载（要带 key）。New API 类中转站（如 AI派）的视频模型都走这个
 //   ark-image / ark-video  中转站原样转发火山方舟格式时，直接复用火山适配器的代码
 //   custom         自定义模板：填好提交地址、请求体、查询地址、各字段在哪，不写代码接新模型
 // 注意（来自 jewelry-image-studio 的经验）：像 4sapi 这类网关按 key 分组，不同分组能用的模型不同，
@@ -98,6 +100,77 @@ async function openaiImages(ctx: AdapterContext, req: PreparedRequest): Promise<
   return { kind: 'done', outputs };
 }
 
+// —— OpenAI 风格统一视频接口 /v1/videos ——
+const REF_ROLE = { image: 'reference_image', video: 'reference_video', audio: 'reference_audio' } as const;
+const URL_KEY = { image: 'image_url', video: 'video_url', audio: 'audio_url' } as const;
+
+/** 有的模型按名字固定画质，要求 resolution 跟模型名对上（AI派文档：minimax-h3 = 1440p，minimax-h3-768p = 768p） */
+function resolutionOf(model: string, params: PreparedRequest['params']): string | undefined {
+  if (params.resolution) return String(params.resolution);
+  const m = model.toLowerCase().match(/-(\d{3,4}p)$/);
+  if (m) return m[1];
+  if (/^minimax-h3$/i.test(model)) return '1440p';
+  return undefined;
+}
+
+async function openaiVideosSubmit(ctx: AdapterContext, req: PreparedRequest): Promise<SubmitResult> {
+  const p = req.params;
+  const model = ctx.model.remoteModel;
+  const duration = Number(p.duration) || 5;
+  const ratio = String(p.ratio || '16:9');
+  const body: Record<string, unknown> = {
+    model,
+    prompt: req.prompt,
+    duration,
+    seconds: String(duration), // 兼容按 OpenAI 原版字段收时长的模型
+    aspect_ratio: ratio,
+    ratio, // 有的模型（Seedance）认 ratio
+  };
+  const resolution = resolutionOf(model, p);
+  if (resolution) body.resolution = resolution;
+  if (p.generate_audio !== undefined) body.generate_audio = Boolean(p.generate_audio);
+  if (p.seed !== undefined && Number(p.seed) >= 0) body.seed = Number(p.seed);
+  // 参考素材放在顶层 content 数组里，每项一个唯一 name；提示词里的 @图1 已经换成同名的 image_1
+  const refs = req.mode === 't2v' ? [] : req.refs;
+  if (refs.length) {
+    const count = { image: 0, video: 0, audio: 0 };
+    const content: any[] = [{ type: 'text', text: req.prompt }];
+    for (const r of refs) {
+      count[r.kind] += 1;
+      const key = URL_KEY[r.kind];
+      content.push({ type: key, [key]: { url: await refUrl(ctx, r) }, role: REF_ROLE[r.kind], name: `${r.kind}_${count[r.kind]}` });
+    }
+    body.content = content;
+    // Seedance 的全能参考要额外声明模式（AI派文档）
+    if (/seedance/i.test(model)) {
+      body.mode = 'reference_material';
+      body.function_mode = 'omni_reference';
+    }
+  }
+  const data = await httpJson<any>(joinUrl(base(ctx), 'videos'), { headers: headers(ctx), body, timeoutMs: 120_000 });
+  const id = data?.id ?? data?.data?.id ?? (typeof data?.data === 'string' ? data.data : undefined) ?? data?.task_id;
+  if (!id) throw new AdapterError(`中转站没有返回任务号：${JSON.stringify(data).slice(0, 300)}`);
+  return { kind: 'pending', remoteId: String(id) };
+}
+
+async function openaiVideosPoll(ctx: AdapterContext, remoteId: string): Promise<PollResult> {
+  const url = joinUrl(base(ctx), `videos/${encodeURIComponent(remoteId)}`);
+  const data = await httpJson<any>(url, { headers: headers(ctx), timeoutMs: 30_000 });
+  const d = data?.data && typeof data.data === 'object' ? data.data : {};
+  const status = String(data?.status ?? d.status ?? '').toLowerCase();
+  if (['completed', 'succeeded', 'success'].includes(status)) {
+    // 结果统一从 /content 下载，要带 key
+    return { status: 'succeeded', outputs: [{ kind: 'video', url: `${url}/content`, mime: 'video/mp4', headers: { ...headers(ctx), Accept: 'video/mp4' } }] };
+  }
+  if (['failed', 'error', 'cancelled', 'canceled', 'expired'].includes(status)) {
+    const e = data?.error ?? d.error;
+    const msg = typeof e === 'string' ? e : e?.message ? `${e.code ? e.code + ' ' : ''}${e.message}` : `任务状态 ${status}`;
+    return { status: 'failed', error: msg };
+  }
+  const progress = data?.progress ?? d.progress;
+  return { status: 'running', note: `中转站${status === 'queued' ? '排队中' : '生成中'}${progress != null && progress !== '' ? ` ${progress}%` : ''}` };
+}
+
 async function customSubmit(ctx: AdapterContext, req: PreparedRequest): Promise<SubmitResult> {
   const t = ctx.model.custom;
   if (!t) throw new AdapterError('这个模型选了「自定义模板」，但还没有填模板');
@@ -164,6 +237,8 @@ export const relayAdapter: Adapter = {
         return openaiChat(ctx, req);
       case 'openai-images':
         return openaiImages(ctx, req);
+      case 'openai-videos':
+        return openaiVideosSubmit(ctx, req);
       case 'ark-image':
         return arkImage(base(ctx), ctx, req);
       case 'ark-video':
@@ -177,12 +252,14 @@ export const relayAdapter: Adapter = {
 
   async poll(ctx, remoteId) {
     if (ctx.model.protocol === 'ark-video') return arkVideoPoll(base(ctx), ctx, remoteId);
+    if (ctx.model.protocol === 'openai-videos') return openaiVideosPoll(ctx, remoteId);
     if (ctx.model.protocol === 'custom') return customPoll(ctx, remoteId);
     return { status: 'failed', error: '这个接口格式不需要查询' };
   },
 
   refLabel(kind, n, model) {
     if (model.protocol === 'ark-image' || model.protocol === 'ark-video') return `${kind === 'image' ? '图片' : kind === 'video' ? '视频' : '音频'}${n}`;
+    if (model.protocol === 'openai-videos') return `${kind}_${n}`; // 和 content 里每项的 name 对上
     return `${kind} ${n}`;
   },
 };

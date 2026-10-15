@@ -74,6 +74,22 @@ export const PRESETS: Record<string, Preset> = {
     ],
   },
 
+  // —— 视频：OpenAI 风格统一视频接口 /v1/videos（New API 类中转站：MiniMax、Seedance、Wan……） ——
+  // 不放「清晰度」：这类接口多数按模型名区分画质（如 minimax-h3-768p），要的话在模型名里选
+  'openai-videos': {
+    label: 'OpenAI 视频（/v1/videos）',
+    modes: [
+      { id: 't2v', label: '文生视频', maxRefs: {} },
+      { id: 'omni', label: '参考生视频', maxRefs: { image: 9, video: 3, audio: 3 }, imageRoles: ['reference'] },
+    ],
+    params: [
+      { key: 'ratio', label: '比例', type: 'select', options: RATIOS_VIDEO, default: '16:9' },
+      { key: 'duration', label: '时长', type: 'select', options: [5, 6, 8, 10, 12, 15], default: 5, unit: 's' },
+      { key: 'count', label: '条数', type: 'select', options: [1, 2, 3, 4], default: 1, unit: '个' },
+      { key: 'generate_audio', label: '生成声音', type: 'boolean', default: false },
+    ],
+  },
+
   // —— 视频：通用（自定义模板用） ——
   'generic-video': {
     label: '通用视频',

@@ -40,6 +40,8 @@ export interface RemoteOutput {
   text?: string;
   /** 适配器自己在本地生成好的文件（演示模型用） */
   localFile?: string;
+  /** 下载结果要带的请求头（比如 /v1/videos/{id}/content 要带 key）。只在内存里用，不存盘 */
+  headers?: Record<string, string>;
 }
 
 export type SubmitResult =

@@ -47,11 +47,18 @@ const hostnameOf = (s: string) => {
   }
 };
 app.addHook('onRequest', async (req, reply) => {
-  const hostOk = LOCAL_HOSTS.has(hostnameOf(`http://${req.headers.host || ''}`));
+  const host = hostnameOf(`http://${req.headers.host || ''}`);
   const origin = req.headers.origin;
   const originOk = !origin || LOCAL_HOSTS.has(hostnameOf(origin));
-  if (!hostOk || !originOk) return reply.status(403).send({ error: '只允许从本机访问' });
+  if (LOCAL_HOSTS.has(host) && originOk) return;
+  // 「参考图传法 = 给公网链接」时，厂商会从你配置的公网地址来取素材：只放行这个地址上的 GET /files/
+  if (req.method === 'GET' && req.url.startsWith('/files/') && host && (await publicHosts()).has(host)) return;
+  return reply.status(403).send({ error: '只允许从本机访问' });
 });
+async function publicHosts(): Promise<Set<string>> {
+  const ps = await listProviderViews();
+  return new Set(ps.filter((p) => p.refMode === 'public' && p.publicBaseUrl).map((p) => hostnameOf(p.publicBaseUrl!)));
+}
 
 await ensureDir(WORKSPACE);
 await app.register(multipart, { limits: { fileSize: 500 * 1024 * 1024 } });

@@ -27,11 +27,19 @@ const CAP_LABEL: Record<Capability, string> = { text: '文本', image: '图片',
 const PROTOCOLS: { id: RelayProtocol; label: string }[] = [
   { id: 'openai-chat', label: 'OpenAI 对话' },
   { id: 'openai-images', label: 'OpenAI 生图' },
+  { id: 'openai-videos', label: 'OpenAI 视频（/v1/videos）' },
   { id: 'ark-image', label: '火山格式生图' },
   { id: 'ark-video', label: '火山格式视频' },
   { id: 'custom', label: '自定义模板' },
 ];
 const DEFAULT_PRESET: Record<Capability, string> = { text: 'chat', image: 'seedream', video: 'seedance', audio: 'mock-audio' };
+/** 中转站模型选了类型后，默认用的接口格式和参数预设（OpenAI 兼容格式最常见） */
+const RELAY_DEFAULTS: Record<'text' | 'image' | 'video', { protocol: RelayProtocol; preset: string }> = {
+  text: { protocol: 'openai-chat', preset: 'chat' },
+  image: { protocol: 'openai-images', preset: 'openai-images' },
+  video: { protocol: 'openai-videos', preset: 'openai-videos' },
+};
+const RELAY_CAPS = ['text', 'image', 'video'] as const;
 
 /** 快速添加：兼容 OpenAI 格式的常见服务商，地址填好，只差 key。模型 ID 以各家文档为准，也可以添加后点「拉取模型列表」 */
 const QUICK_ADD: { label: string; name: string; baseUrl: string; models: { name: string; remoteModel: string }[] }[] = [
@@ -133,8 +141,8 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
           name: '',
           capability: cap,
           remoteModel: '',
-          preset: draft.type === 'relay' ? 'generic-video' : DEFAULT_PRESET[cap],
-          protocol: draft.type === 'relay' ? 'ark-video' : undefined,
+          preset: draft.type === 'relay' ? RELAY_DEFAULTS.video.preset : DEFAULT_PRESET[cap],
+          protocol: draft.type === 'relay' ? RELAY_DEFAULTS.video.protocol : undefined,
           enabled: true,
         },
       ],
@@ -372,7 +380,15 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                           <input value={m.name} placeholder="界面上显示的名字" onChange={(e) => setModel(i, { name: e.target.value })} />
                         </td>
                         <td>
-                          <select value={m.capability} onChange={(e) => setModel(i, { capability: e.target.value as Capability, preset: DEFAULT_PRESET[e.target.value as Capability] })}>
+                          <select
+                            value={m.capability}
+                            onChange={(e) => {
+                              const c = e.target.value as Capability;
+                              // 中转站：类型变了，接口格式和参数预设一起换成这个类型的默认值
+                              const relay = draft.type === 'relay' && c !== 'audio' ? RELAY_DEFAULTS[c] : undefined;
+                              setModel(i, { capability: c, preset: relay?.preset || DEFAULT_PRESET[c], ...(relay ? { protocol: relay.protocol } : {}) });
+                            }}
+                          >
                             {Object.entries(CAP_LABEL).map(([k, v]) => (
                               <option key={k} value={k}>
                                 {v}
@@ -497,6 +513,9 @@ function PullPicker({
 }) {
   const q = pull.q.trim().toLowerCase();
   const shown = pull.items.filter((g) => !q || g.remoteModel.toLowerCase().includes(q));
+  // 改类型：接口格式和参数预设换成这个类型的默认值
+  const setCap = (id: string, cap: (typeof RELAY_CAPS)[number]) =>
+    onChange({ ...pull, items: pull.items.map((g) => (g.remoteModel === id ? { ...g, capability: cap, ...RELAY_DEFAULTS[cap], note: undefined } : g)) });
   const toggle = (id: string) => {
     const picked = new Set(pull.picked);
     if (picked.has(id)) picked.delete(id);
@@ -529,7 +548,22 @@ function PullPicker({
               ) : (
                 <>
                   {g.note && g.supported && <span className="pull-note">{g.note}</span>}
-                  <span className="tag">{CAP_OF_GUESS(g)}</span>
+                  {g.supported ? (
+                    // 类型按名字猜的，猜错了直接在这里改
+                    <select
+                      className="pull-cap"
+                      value={g.capability}
+                      onChange={(e) => setCap(g.remoteModel, e.target.value as (typeof RELAY_CAPS)[number])}
+                    >
+                      {RELAY_CAPS.map((c) => (
+                        <option key={c} value={c}>
+                          {CAP_LABEL[c]}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="tag">{CAP_OF_GUESS(g)}</span>
+                  )}
                   {g.supported && <span className="muted">{PROTOCOL_LABEL(g.protocol)}</span>}
                 </>
               )}

@@ -57,7 +57,7 @@ export interface ModelInfo {
 export type ProviderType = 'mock' | 'volcengine' | 'relay';
 
 /** 中转站模型的接口格式 */
-export type RelayProtocol = 'openai-chat' | 'openai-images' | 'ark-image' | 'ark-video' | 'custom';
+export type RelayProtocol = 'openai-chat' | 'openai-images' | 'openai-videos' | 'ark-image' | 'ark-video' | 'custom';
 
 /** 自定义接口模板：不写代码接一个新的异步模型 */
 export interface CustomTemplate {

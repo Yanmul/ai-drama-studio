@@ -212,11 +212,11 @@ async function download(o: RemoteOutput): Promise<{ buf: Buffer; mime: string }>
     const [head, b64] = o.url.split(',', 2);
     return { buf: Buffer.from(b64, 'base64'), mime: head.slice(5).split(';')[0] };
   }
-  // 厂商的结果链接是带签名的临时链接，不能带我们的 key
+  // 厂商的结果链接一般是带签名的临时链接，不带 key；只有适配器明确要求时（o.headers）才带
   let lastErr = '';
   for (let i = 0; i < 3; i++) {
     try {
-      const resp = await fetch(o.url, { signal: AbortSignal.timeout(300_000) });
+      const resp = await fetch(o.url, { headers: o.headers, signal: AbortSignal.timeout(300_000) });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       return { buf: Buffer.from(await resp.arrayBuffer()), mime: resp.headers.get('content-type') || o.mime || '' };
     } catch (e: any) {
