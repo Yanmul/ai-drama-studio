@@ -34,6 +34,7 @@ export function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [modal, setModal] = useState<'' | 'models' | 'chars' | 'history' | 'project'>('');
   const [showQueue, setShowQueue] = useState(false);
+  const [cleanup, setCleanup] = useState<AppCtx['cleanup']>();
   const [editingName, setEditingName] = useState(false);
   const historyCb = useRef<((file: string, kind: 'image' | 'video' | 'audio') => void) | undefined>(undefined);
 
@@ -118,6 +119,13 @@ export function App() {
         }
         return;
       }
+      if (ev.type === 'cleanup') {
+        if (ev.files > 0) {
+          setCleanup({ deleted: ev.deleted, at: Date.now() });
+          toast(`已自动清理 ${ev.files} 个 3 天前的文件，释放 ${(ev.bytes / 1024 / 1024).toFixed(1)} MB（定稿和角色图已保留）`);
+        }
+        return;
+      }
       if (ev.type !== 'job') return;
       const j = ev.job;
       setJobs((prev) => {
@@ -145,6 +153,7 @@ export function App() {
     toast,
     refreshModels,
     refreshCharacters,
+    cleanup,
     openCharacters: () => setModal('chars'),
     openModels: () => setModal('models'),
     pickFromHistory: (cb) => {
@@ -235,8 +244,8 @@ export function App() {
                 </button>
                 <button className="ghost" onClick={() => setModal('models')}>
                   <SlidersHorizontal size={15} /> 模型
-                  {models.some((m) => m.providerId !== 'demo') ? (
-                    <span className="pill">{models.filter((m) => m.providerId !== 'demo').length}</span>
+                  {models.length ? (
+                    <span className="pill">{models.length}</span>
                   ) : (
                     <span className="pill warn">未接入</span>
                   )}

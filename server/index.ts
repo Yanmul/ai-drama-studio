@@ -19,14 +19,14 @@ import {
   readCanvas,
   saveCanvas,
   saveCharacter,
-  seedIfEmpty,
   updateEpisode,
   updateProject,
 } from './projects.js';
 import { ADAPTERS, deleteProvider, listModels, listProviderViews, remoteModels, testModel, testProvider, upsertProvider } from './providers/index.js';
+import { cleanupStatus, runCleanup, startCleanupSchedule } from './cleanup.js';
 import { cancelJob, enqueue, events, getJob, listJobs, recover, resumeJob, runQuickText } from './queue.js';
 import { addAssets, deleteAsset, listAssets, renameAsset, type AssetInput } from './assets.js';
-import { PROJECT_ROOT, WORKSPACE, ensureDir, kindOfFile, newId, paths, rel } from './storage.js';
+import { PROJECT_ROOT, WORKSPACE, absFromRel, ensureDir, kindOfFile, newId, paths, rel } from './storage.js';
 
 const PORT = Number(process.env.PORT || 6688);
 const app = Fastify({ logger: false, bodyLimit: 50 * 1024 * 1024 });
@@ -166,9 +166,24 @@ app.get('/api/projects/:pid/history', async (req) => {
     .filter((j) => j.status === 'succeeded')
     .flatMap((j) =>
       (j.outputs || [])
-        .filter((o) => o.file)
+        .filter((o) => o.file && fileExists(o.file)) // 被自动清理删掉的不再列出
         .map((o) => ({ file: o.file!, kind: o.kind, jobId: j.id, createdAt: j.finishedAt || j.createdAt, prompt: j.request.prompt, model: j.modelName })),
     );
+});
+
+function fileExists(relPath: string) {
+  try {
+    return fs.existsSync(absFromRel(relPath));
+  } catch {
+    return false;
+  }
+}
+
+// —— 自动清理（每 3 天删 3 天前的生成 / 上传文件） ——
+app.get('/api/cleanup', async () => cleanupStatus());
+app.post('/api/cleanup/run', async () => {
+  await runCleanup();
+  return cleanupStatus();
 });
 
 // —— 生成与队列 ——
@@ -214,7 +229,7 @@ app.setNotFoundHandler((req, reply) => {
   reply.status(404).send('前端还没有构建：请运行 npm run build，或用 npm run dev 开发模式');
 });
 
-await seedIfEmpty();
 await recover();
+startCleanupSchedule();
 await app.listen({ host: '127.0.0.1', port: PORT });
 console.log(`\n  短剧工作台已启动： http://127.0.0.1:${PORT}\n  工作文件夹：${WORKSPACE}\n`);

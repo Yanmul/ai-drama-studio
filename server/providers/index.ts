@@ -5,13 +5,11 @@ import { guessModel } from './guess.js';
 import { decrypt, encrypt, hint } from '../secrets.js';
 import { getPreset } from '../presets.js';
 import { newId, nowIso, paths, readJson, writeJson } from '../storage.js';
-import { mockAdapter } from './mock.js';
 import { relayAdapter } from './relay.js';
 import type { Adapter, ProviderRecord } from './types.js';
 import { ARK_DEFAULT_BASE, volcengineAdapter } from './volcengine.js';
 
 export const ADAPTERS: Record<ProviderType, Adapter> = {
-  mock: mockAdapter,
   volcengine: volcengineAdapter,
   relay: relayAdapter,
 };
@@ -27,22 +25,6 @@ function defaults(): ProvidersFile {
   return {
     version: 1,
     providers: [
-      {
-        id: 'demo',
-        name: '演示模型（不花钱）',
-        type: 'mock',
-        baseUrl: '',
-        apiKeyEnc: '',
-        enabled: true,
-        concurrency: 3,
-        refMode: 'base64',
-        models: [
-          { id: 'image', name: '演示生图', capability: 'image', remoteModel: 'mock', preset: 'mock-image', enabled: true },
-          { id: 'video', name: '演示生视频', capability: 'video', remoteModel: 'mock', preset: 'mock-video', enabled: true },
-          { id: 'text', name: '演示文本', capability: 'text', remoteModel: 'mock', preset: 'chat', enabled: true },
-          { id: 'audio', name: '演示配音', capability: 'audio', remoteModel: 'mock', preset: 'mock-audio', enabled: true },
-        ],
-      },
       {
         id: 'ark',
         name: '火山引擎',
@@ -60,45 +42,6 @@ function defaults(): ProvidersFile {
           { id: 'doubao', name: '豆包（文本）', capability: 'text', remoteModel: 'doubao-seed-1-6-250615', preset: 'chat', enabled: true },
         ],
       },
-      {
-        id: 'relay-4sapi',
-        name: '4sapi 中转站（示例）',
-        type: 'relay',
-        baseUrl: 'https://4sapi.com/v1',
-        apiKeyEnc: '',
-        enabled: true,
-        concurrency: 2,
-        refMode: 'base64',
-        models: [
-          { id: 'gpt-image', name: 'GPT 生图', capability: 'image', remoteModel: 'gpt-image-2', preset: 'openai-images', protocol: 'openai-images', enabled: true },
-          { id: 'claude', name: 'Claude（文本）', capability: 'text', remoteModel: 'claude-sonnet-4-6', preset: 'chat', protocol: 'openai-chat', enabled: true },
-          {
-            id: 'custom-video',
-            name: '自定义视频模型（模板示例）',
-            capability: 'video',
-            remoteModel: '在这里填中转站给的模型名',
-            preset: 'generic-video',
-            protocol: 'custom',
-            enabled: false,
-            custom: {
-              submitPath: '/video/generations',
-              submitBody: JSON.stringify(
-                { model: '{{model}}', prompt: '{{prompt}}', images: '{{images}}', aspect_ratio: '{{params.ratio}}', duration: '{{params.duration}}' },
-                null,
-                2,
-              ),
-              taskIdPath: 'id',
-              pollPath: '/video/generations/{{taskId}}',
-              statusPath: 'status',
-              successValues: ['succeeded', 'success', 'completed'],
-              failValues: ['failed', 'error', 'cancelled'],
-              resultUrlPath: 'video_url',
-              errorPath: 'error.message',
-              resultKind: 'video',
-            },
-          },
-        ],
-      },
     ],
   };
 }
@@ -107,7 +50,10 @@ export async function loadProviders(): Promise<ProvidersFile> {
   if (cache) return cache;
   const file = await readJson<ProvidersFile | null>(paths.providers(), null);
   cache = file || defaults();
-  if (!file) await writeJson(paths.providers(), cache);
+  // 去掉已经不支持的服务商类型（比如以前的「演示模型」）
+  const before = cache.providers.length;
+  cache.providers = cache.providers.filter((p) => p.type in ADAPTERS);
+  if (!file || cache.providers.length !== before) await writeJson(paths.providers(), cache);
   return cache;
 }
 
@@ -127,7 +73,7 @@ export function apiKeyOf(p: ProviderRecord): string {
 }
 
 function isReady(p: ProviderRecord): boolean {
-  return p.enabled && (p.type === 'mock' || Boolean(p.apiKeyEnc));
+  return p.enabled && Boolean(p.apiKeyEnc);
 }
 
 export function toView(p: ProviderRecord): ProviderView {
@@ -264,7 +210,6 @@ export async function testModel(id: string, mid: string): Promise<{ ok: boolean;
   if (!model.remoteModel) return { ok: false, message: '还没有填模型 ID' };
   const adapter = ADAPTERS[p.type];
   const ctx = { provider: p, model, apiKey: apiKeyOf(p) };
-  if (p.type === 'mock') return { ok: true, message: '演示模型，随时可用' };
 
   let listed: boolean | undefined;
   if (adapter.listModels) {

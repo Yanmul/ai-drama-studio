@@ -24,6 +24,7 @@ import { api } from './api';
 import { AddNodeMenu, type AddMenuAction } from './components/AddNodeMenu';
 import { CanvasContext, useApp, type CanvasCtx } from './context';
 import { buildRequest } from './inputs';
+import { pruneDeletedVersions } from '../shared/cleanup';
 import { KIND_CAP, KIND_LABEL, makeNodeData, newId, pickModel } from './lib';
 import { MediaNode } from './nodes/MediaNode';
 import { FlowEdge } from './edges/FlowEdge';
@@ -190,6 +191,22 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
   useEffect(() => {
     if (loaded) setNodes((ns) => applyJobs(ns, jobs, episode.id));
   }, [jobs, loaded, episode.id]);
+
+  // —— 定时清理删了文件：正开着的画布也去掉对应版本（不然下次自动保存会把它们写回去） ——
+  useEffect(() => {
+    if (!loaded || !app.cleanup?.deleted.length) return;
+    const deleted = new Set(app.cleanup.deleted);
+    setNodes((ns) => {
+      let changed = false;
+      const next = ns.map((n) => {
+        const d = pruneDeletedVersions(n.data, deleted);
+        if (!d) return n;
+        changed = true;
+        return { ...n, data: d };
+      });
+      return changed ? next : ns;
+    });
+  }, [app.cleanup, loaded]);
 
   // —— 自动保存（停手 0.8 秒后存；切集、回主页、关页面时把没存的立刻存掉） ——
   // 用这张画布自己的 nodes / edges 状态，不用 rf.getNodes()：卸载时 React Flow 的 store 可能已经换成下一张画布

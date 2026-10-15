@@ -110,7 +110,7 @@ export function buildRequest(
 
 export function estimateCost(model: ModelInfo | undefined, params: Record<string, unknown>): string {
   const pr = model?.price;
-  if (!pr) return model?.providerId === 'demo' ? '¥0' : '—';
+  if (!pr) return '—';
   let n = pr.amount;
   if (pr.unit === 'per_second') n = pr.amount * (Number(params.duration) || 5) * (model?.capability === 'video' ? Number(params.count) || 1 : 1);
   if (pr.unit === 'per_image') n = pr.amount * (Number(params.count) || 1);

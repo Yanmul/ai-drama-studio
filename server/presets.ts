@@ -102,31 +102,11 @@ export const PRESETS: Record<string, Preset> = {
     ],
   },
 
-  // —— 演示模型（不联网、不花钱，用来试界面） ——
-  'mock-image': {
-    label: '演示生图',
-    modes: imageModes,
-    params: [
-      { key: 'ratio', label: '比例', type: 'select', options: RATIOS_IMAGE, default: '16:9' },
-      { key: 'count', label: '张数', type: 'select', options: [1, 2, 3, 4], default: 1, unit: '张' },
-      seedAdvanced,
-    ],
-  },
-  'mock-video': {
-    label: '演示生视频',
-    modes: videoModes,
-    params: [
-      { key: 'ratio', label: '比例', type: 'select', options: RATIOS_VIDEO, default: '16:9' },
-      { key: 'resolution', label: '清晰度', type: 'select', options: ['480p', '720p', '1080p'], default: '720p' },
-      { key: 'duration', label: '时长', type: 'select', options: [5, 10], default: 5, unit: 's' },
-      { key: 'count', label: '条数', type: 'select', options: [1, 2], default: 1, unit: '个' },
-      { key: 'generate_audio', label: '生成声音', type: 'boolean', default: true },
-    ],
-  },
-  'mock-audio': {
-    label: '演示配音',
+  // —— 音频：文字转语音（自定义模板接配音模型时用） ——
+  tts: {
+    label: '文字转语音',
     modes: [{ id: 'tts', label: '文字转语音', maxRefs: { audio: 1 } }],
-    params: [{ key: 'voice', label: '音色', type: 'select', options: ['少年', '中年男', '中年女'], default: '少年' }],
+    params: [{ key: 'voice', label: '音色', type: 'text', default: '' }],
   },
 };
 

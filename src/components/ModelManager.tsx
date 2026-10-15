@@ -22,7 +22,7 @@ interface Draft {
   lastTest?: ProviderView['lastTest'];
 }
 
-const TYPE_LABEL: Record<ProviderType, string> = { volcengine: '火山引擎', relay: '中转站', mock: '演示' };
+const TYPE_LABEL: Record<ProviderType, string> = { volcengine: '火山引擎', relay: '中转站' };
 const CAP_LABEL: Record<Capability, string> = { text: '文本', image: '图片', video: '视频', audio: '音频' };
 const PROTOCOLS: { id: RelayProtocol; label: string }[] = [
   { id: 'openai-chat', label: 'OpenAI 对话' },
@@ -32,7 +32,7 @@ const PROTOCOLS: { id: RelayProtocol; label: string }[] = [
   { id: 'ark-video', label: '火山格式视频' },
   { id: 'custom', label: '自定义模板' },
 ];
-const DEFAULT_PRESET: Record<Capability, string> = { text: 'chat', image: 'seedream', video: 'seedance', audio: 'mock-audio' };
+const DEFAULT_PRESET: Record<Capability, string> = { text: 'chat', image: 'seedream', video: 'seedance', audio: 'tts' };
 /** 中转站模型选了类型后，默认用的接口格式和参数预设（OpenAI 兼容格式最常见） */
 const RELAY_DEFAULTS: Record<'text' | 'image' | 'video', { protocol: RelayProtocol; preset: string }> = {
   text: { protocol: 'openai-chat', preset: 'chat' },
@@ -112,7 +112,7 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
     setPull(null);
     setDraft({
       id: null,
-      name: quick?.name || (type === 'relay' ? '新中转站' : type === 'volcengine' ? '火山引擎' : '演示模型'),
+      name: quick?.name || (type === 'relay' ? '新中转站' : '火山引擎'),
       type,
       baseUrl: quick?.baseUrl || (type === 'volcengine' ? 'https://ark.cn-beijing.volces.com/api/v3' : ''),
       apiKey: '',
@@ -251,7 +251,7 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                   setDraft(toDraft(p));
                 }}
               >
-                <span className={`dot ${p.enabled && (p.type === 'mock' || p.keyHint) ? 'ok' : ''}`} />
+                <span className={`dot ${p.enabled && p.keyHint ? 'ok' : ''}`} />
                 <span className="mm-name">{p.name}</span>
                 <span className="muted">{TYPE_LABEL[p.type]}</span>
               </button>
@@ -262,9 +262,6 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
               </button>
               <button onClick={() => add('relay')}>
                 <Plus size={13} /> 中转站
-              </button>
-              <button onClick={() => add('mock')}>
-                <Plus size={13} /> 演示
               </button>
             </div>
             <div className="mm-add-label muted">快速添加（地址已填好）</div>
@@ -284,44 +281,40 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                 <input value={draft.name} onChange={(e) => set({ name: e.target.value })} />
                 <label>类型</label>
                 <div className="muted">{TYPE_LABEL[draft.type]}</div>
-                {draft.type !== 'mock' && (
-                  <>
-                    <label>接口地址</label>
+                <label>接口地址</label>
+                <input
+                  value={draft.baseUrl}
+                  placeholder={draft.type === 'relay' ? '例如 https://4sapi.com/v1' : 'https://ark.cn-beijing.volces.com/api/v3'}
+                  onChange={(e) => set({ baseUrl: e.target.value })}
+                />
+                <label>API key</label>
+                <div className="row">
+                  <input
+                    type="password"
+                    value={draft.apiKey}
+                    placeholder={draft.keyHint ? `已保存 ${draft.keyHint}，留空不改` : '粘贴 key，加密保存在本机'}
+                    onChange={(e) => set({ apiKey: e.target.value, clearKey: false })}
+                  />
+                  {draft.keyHint && (
+                    <button className="ghost" onClick={() => set({ clearKey: !draft.clearKey, apiKey: '' })}>
+                      {draft.clearKey ? '撤销清除' : '清除 key'}
+                    </button>
+                  )}
+                </div>
+                <label>参考图传法</label>
+                <div className="row">
+                  <select value={draft.refMode} onChange={(e) => set({ refMode: e.target.value as any })}>
+                    <option value="base64">直接塞进请求（base64）</option>
+                    <option value="public">给公网链接</option>
+                  </select>
+                  {draft.refMode === 'public' && (
                     <input
-                      value={draft.baseUrl}
-                      placeholder={draft.type === 'relay' ? '例如 https://4sapi.com/v1' : 'https://ark.cn-beijing.volces.com/api/v3'}
-                      onChange={(e) => set({ baseUrl: e.target.value })}
+                      value={draft.publicBaseUrl}
+                      placeholder="能从外网访问到本机的地址，例如 https://xxx.example.com"
+                      onChange={(e) => set({ publicBaseUrl: e.target.value })}
                     />
-                    <label>API key</label>
-                    <div className="row">
-                      <input
-                        type="password"
-                        value={draft.apiKey}
-                        placeholder={draft.keyHint ? `已保存 ${draft.keyHint}，留空不改` : '粘贴 key，加密保存在本机'}
-                        onChange={(e) => set({ apiKey: e.target.value, clearKey: false })}
-                      />
-                      {draft.keyHint && (
-                        <button className="ghost" onClick={() => set({ clearKey: !draft.clearKey, apiKey: '' })}>
-                          {draft.clearKey ? '撤销清除' : '清除 key'}
-                        </button>
-                      )}
-                    </div>
-                    <label>参考图传法</label>
-                    <div className="row">
-                      <select value={draft.refMode} onChange={(e) => set({ refMode: e.target.value as any })}>
-                        <option value="base64">直接塞进请求（base64）</option>
-                        <option value="public">给公网链接</option>
-                      </select>
-                      {draft.refMode === 'public' && (
-                        <input
-                          value={draft.publicBaseUrl}
-                          placeholder="能从外网访问到本机的地址，例如 https://xxx.example.com"
-                          onChange={(e) => set({ publicBaseUrl: e.target.value })}
-                        />
-                      )}
-                    </div>
-                  </>
-                )}
+                  )}
+                </div>
                 <label>同时最多</label>
                 <div className="row">
                   <input className="short" type="number" min={1} max={10} value={draft.concurrency} onChange={(e) => set({ concurrency: Number(e.target.value) })} />

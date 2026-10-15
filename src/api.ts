@@ -9,6 +9,7 @@ import type {
   ModelInfo,
   Project,
   ProjectSummary,
+  CleanupStatus,
   ProviderView,
   RemoteModelGuess,
 } from '../shared/types';
@@ -65,6 +66,9 @@ export const api = {
     call<{ added: Asset[]; skipped: number }>('POST', '/api/assets', { items }),
   renameAsset: (id: string, name: string) => call<Asset>('PUT', `/api/assets/${id}`, { name }),
   deleteAsset: (id: string) => call('DELETE', `/api/assets/${id}`),
+
+  cleanupStatus: () => call<CleanupStatus>('GET', '/api/cleanup'),
+  runCleanup: () => call<CleanupStatus>('POST', '/api/cleanup/run'),
 
   generate: (req: GenerateRequest) => call<Job[]>('POST', '/api/generate', req),
   jobs: (pid: string) => call<Job[]>('GET', `/api/jobs?projectId=${encodeURIComponent(pid)}`),

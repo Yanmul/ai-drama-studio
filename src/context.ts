@@ -13,6 +13,8 @@ export interface AppCtx {
   refreshCharacters: () => void;
   openCharacters: () => void;
   openModels: () => void;
+  /** 最近一次定时清理删掉的文件；画布据此去掉对应版本 */
+  cleanup?: { deleted: string[]; at: number };
   /** 打开「从生成历史选择」，选中后回调 */
   pickFromHistory: (cb: (file: string, kind: 'image' | 'video' | 'audio') => void) => void;
 }

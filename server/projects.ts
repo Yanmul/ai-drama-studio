@@ -1,7 +1,7 @@
-// 项目、剧集、画布、角色的读写，以及第一次启动时的示例项目。
+// 项目、剧集、画布、角色的读写。
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { CanvasFile, Character, Episode, NodeData, Project, ProjectSummary } from '../shared/types.js';
+import type { CanvasFile, Character, Episode, Project, ProjectSummary } from '../shared/types.js';
 import { WORKSPACE, ensureDir, listDirs, listFiles, newId, nowIso, paths, readJson, rotateBackups, safe, writeJson } from './storage.js';
 
 export async function listProjects(): Promise<Project[]> {
@@ -130,88 +130,4 @@ export async function saveCharacter(pid: string, c: Partial<Character> & { name:
 
 export async function deleteCharacter(pid: string, cid: string) {
   await fsp.rm(path.join(paths.characters(pid), `${safe(cid)}.json`), { force: true });
-}
-
-// —— 第一次启动：放一个《压线过弯》示例项目，打开就能看到怎么用 ——
-
-function node(id: string, kind: NodeData['kind'], title: string, x: number, y: number, extra: Partial<NodeData> = {}) {
-  const data: NodeData = {
-    kind,
-    title,
-    versions: [],
-    current: -1,
-    gen: { prompt: '', params: {}, refRoles: {} },
-    ...extra,
-  };
-  return { id, type: 'media', position: { x, y }, data };
-}
-
-export async function seedIfEmpty() {
-  if ((await listDirs(paths.projects())).length) return;
-  await ensureDir(paths.projects());
-  const p: Project = {
-    id: 'yaxian',
-    name: '压线过弯',
-    style: '写实电影质感，2010 年代中国四川小城，胶片颗粒感，浅景深，画面中不出现任何文字',
-    ratio: '9:16',
-    createdAt: nowIso(),
-  };
-  await writeJson(paths.projectFile(p.id), p);
-  const hero = await saveCharacter(p.id, {
-    id: 'char_hubobing_young',
-    name: '胡柏冰（少年）',
-    description: '11 岁中国男孩，偏胖，圆脸，脸颊鼓鼓的，黑色中分头发长短不齐，额前一绺头发翘起来，穿褪色的蓝白色小学校服',
-  });
-  const e: Episode = { id: 'ep01', index: 1, title: '第1集 靠窗第二排' };
-  await writeJson(path.join(paths.episode(p.id, e.id), 'episode.json'), e);
-
-  const script = [
-    '镜头1：老式 CRT 显示器上，一辆卡通赛车在弯道漂移，差一点撞墙。男孩凑近屏幕看呆了。',
-    '镜头2：两个男孩坐在电脑前。瘦男孩得意地问「帅不帅？」，胖男孩问「它咋个不撞墙？」',
-    '镜头3：男孩用手指隔空描屏幕上的弯道；黄昏老街上，他边走边在空中画弧线。',
-    '镜头4：他专心画线，额头撞上电线杆，左右看看没人，接着走；切到冰箱门上的纸条。',
-    '镜头5：狭小厨房，他踮脚热剩饭，油溅到手背，缩一下手接着翻饭。',
-    '镜头6：挂历纸背面画满了一条条弯道；一碗米饭冒着最后一缕热气（静止镜头）。',
-    '镜头7：门外钥匙声，他把纸塞到碗底，低头扒饭。妈妈问「作业写完没得？」',
-  ].join('\n\n');
-
-  const videoGen = (prompt: string) => ({
-    modelId: 'demo/video',
-    mode: 'omni',
-    prompt,
-    params: { ratio: '9:16', resolution: '720p', duration: 5, count: 1, generate_audio: true },
-    refRoles: {},
-  });
-
-  const canvas: CanvasFile = {
-    nodes: [
-      node('n_script', 'script', '脚本 · 第1集', -560, -80, { text: script }),
-      node('n_hero', 'image', '胡柏冰（少年）定妆图', 0, 440, {
-        characterId: hero.id,
-        gen: {
-          modelId: 'demo/image',
-          mode: 't2i',
-          prompt: '角色定妆照，正面半身，纯色背景，' + hero.description,
-          params: { ratio: '3:4', count: 1 },
-          refRoles: {},
-        },
-      }),
-      node('n_t1', 'text', '镜头1 · 提示词', 0, -300, {
-        text: '镜头1（0-4秒）：特写老式 CRT 显示器，屏幕上一辆卡通赛车在弯道漂移，车身贴着护栏擦过，差一点撞墙，轮胎冒白烟。\n镜头2（4-10秒）：切到近景，@图1 慢慢把脸凑近屏幕，屏幕蓝光在脸上闪动，嘴微微张开，看得入迷。',
-      }),
-      node('n_v1', 'video', '视频节点 1', 440, -380, { gen: videoGen('冷蓝色调，房间昏暗，屏幕光是唯一光源。') }),
-      node('n_t2', 'text', '镜头2 · 提示词', 0, 80, {
-        text: '镜头1（0-5秒）：中景，两个男孩并排坐在老式电脑前。瘦男孩得意地说「帅不帅？漂移！」，@图1 一动不动盯着屏幕。\n镜头2（5-10秒）：@图1 眉头微皱，小声问「它咋个不撞墙？」',
-      }),
-      node('n_v2', 'video', '视频节点 2', 440, 20, { gen: videoGen('午后阳光从窗帘缝里透进来，自然光。') }),
-    ],
-    edges: [
-      { id: 'e1', source: 'n_t1', target: 'n_v1' },
-      { id: 'e2', source: 'n_hero', target: 'n_v1' },
-      { id: 'e3', source: 'n_t2', target: 'n_v2' },
-      { id: 'e4', source: 'n_hero', target: 'n_v2' },
-    ],
-    viewport: { x: 660, y: 420, zoom: 0.72 },
-  };
-  await writeJson(paths.canvas(p.id, e.id), canvas);
 }

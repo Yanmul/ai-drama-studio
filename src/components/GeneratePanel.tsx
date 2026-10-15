@@ -4,14 +4,11 @@ import { useNodeConnections, useNodesData, useReactFlow, type Node } from '@xyfl
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUp,
-  Box,
   Camera,
   ChevronDown,
   FileText,
   Languages,
-  Link2,
   Loader2,
-  MapPin,
   Maximize2,
   Minimize2,
   Plus,
@@ -207,12 +204,6 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
         </button>
         {data.kind !== 'text' && data.kind !== 'audio' && (
           <>
-            <button className="chip disabled" title="待确认：我的理解是在参考图上圈出一块区域，告诉模型改这里或参考这个东西">
-              <MapPin size={14} /> 标记
-            </button>
-            <button className="chip disabled" title="待确认：我的理解是厂商提供的特效模板（只有个别模型支持）">
-              <Box size={14} /> 特效
-            </button>
             <span className="chip-wrap">
               <button className="chip" onClick={() => setPop(pop === 'chars' ? '' : 'chars')} title="从角色库挑一个角色，把定妆图连进来">
                 <ShieldCheck size={14} /> 角色库
@@ -252,12 +243,6 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
                 </Popover>
               </span>
             )}
-            <button className="chip disabled" title="待确认：我的理解是把一份文档的内容当作提示词的参考材料">
-              <FileText size={14} /> 文档
-            </button>
-            <button className="chip disabled" title="待确认：我的理解是把一个网页链接的内容当作参考材料">
-              <Link2 size={14} /> 链接
-            </button>
           </>
         )}
         <span className="spacer" />

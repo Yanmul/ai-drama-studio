@@ -40,7 +40,7 @@ export function defaultParams(m?: ModelInfo): Record<string, string | number | b
 
 export function pickModel(models: ModelInfo[], cap: Capability, preferred?: string): ModelInfo | undefined {
   const list = models.filter((m) => m.capability === cap);
-  return list.find((m) => m.id === preferred) || list.find((m) => m.providerId !== 'demo') || list[0];
+  return list.find((m) => m.id === preferred) || list[0];
 }
 
 export function emptyGen(models: ModelInfo[], kind: NodeKind, projectRatio?: string): GenState {

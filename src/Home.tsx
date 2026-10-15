@@ -1,7 +1,7 @@
 // 主页：上面「新建画布创作」，下面是历史画布
 import { useEffect, useMemo, useState } from 'react';
-import { Clapperboard, LayoutGrid, Loader2, MoreHorizontal, PenLine, Plus, Search, SlidersHorizontal, Trash2 } from 'lucide-react';
-import type { ProjectSummary } from '../shared/types';
+import { Clapperboard, Eraser, LayoutGrid, Loader2, MoreHorizontal, PenLine, Plus, Search, SlidersHorizontal, Trash2 } from 'lucide-react';
+import type { CleanupStatus, ProjectSummary } from '../shared/types';
 import { api, fileUrl } from './api';
 import { fileKind } from './lib';
 
@@ -75,6 +75,7 @@ export function Home({
           短剧工作台
         </div>
         <span className="spacer" />
+        <CleanupInfo toast={toast} />
         <button className="ghost" onClick={onOpenModels}>
           <SlidersHorizontal size={15} /> 模型管理
         </button>
@@ -159,5 +160,53 @@ export function Home({
         </div>
       </main>
     </div>
+  );
+}
+
+const fmtDay = (iso?: string) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+/** 右上角：自动清理的状态 + 立即清理 */
+function CleanupInfo({ toast }: { toast: (m: string, k?: 'info' | 'error') => void }) {
+  const [s, setS] = useState<CleanupStatus>();
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api.cleanupStatus().then(setS).catch(() => undefined);
+  }, []);
+  if (!s) return null;
+  const tip = [
+    `每 ${s.everyDays} 天自动删除 ${s.keepDays} 天前生成 / 上传的图片、视频、音频`,
+    '定稿（⭐）的版本、角色库用到的图、资产库里的文件会保留；项目、画布、文字不删',
+    s.lastRun ? `上次清理：${fmtDay(s.lastRun)}，删了 ${s.lastResult?.files ?? 0} 个文件` : '',
+    s.nextRun ? `下次清理：${fmtDay(s.nextRun)}` : '',
+    '点一下立即清理',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  return (
+    <button
+      className="ghost"
+      title={tip}
+      disabled={busy}
+      onClick={async () => {
+        if (!confirm(`现在就删除 ${s.keepDays} 天前生成 / 上传的文件？\n定稿（⭐）的版本和角色图会保留，删了找不回来。`)) return;
+        setBusy(true);
+        try {
+          const before = s.lastRun;
+          const next = await api.runCleanup();
+          setS(next);
+          if (next.lastRun !== before) toast(`清理完成：删除 ${next.lastResult?.files ?? 0} 个文件`);
+        } catch (e: any) {
+          toast(e.message, 'error');
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? <Loader2 size={15} className="spin" /> : <Eraser size={15} />} 自动清理{s.nextRun ? ` · 下次 ${fmtDay(s.nextRun).split(' ')[0]}` : ''}
+    </button>
   );
 }

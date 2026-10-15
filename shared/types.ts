@@ -54,7 +54,7 @@ export interface ModelInfo {
 }
 
 /** 服务商类型 = 适配器类型 */
-export type ProviderType = 'mock' | 'volcengine' | 'relay';
+export type ProviderType = 'volcengine' | 'relay';
 
 /** 中转站模型的接口格式 */
 export type RelayProtocol = 'openai-chat' | 'openai-images' | 'openai-videos' | 'ark-image' | 'ark-video' | 'custom';
@@ -260,4 +260,17 @@ export interface CanvasFile {
 }
 
 /** 服务器推送的事件 */
-export type ServerEvent = { type: 'job'; job: Job } | { type: 'hello' };
+export type ServerEvent =
+  | { type: 'job'; job: Job }
+  | { type: 'hello' }
+  /** 定时清理删掉了这些文件（相对工作文件夹的路径） */
+  | { type: 'cleanup'; deleted: string[]; files: number; bytes: number };
+
+/** 自动清理的状态 */
+export interface CleanupStatus {
+  lastRun?: string;
+  nextRun?: string;
+  lastResult?: { files: number; bytes: number };
+  keepDays: number;
+  everyDays: number;
+}
