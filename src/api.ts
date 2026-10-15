@@ -12,9 +12,10 @@ import type {
   ProviderView,
 } from '../shared/types';
 
-async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
+async function call<T>(method: string, url: string, body?: unknown, keepalive = false): Promise<T> {
   const resp = await fetch(url, {
     method,
+    keepalive,
     headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
@@ -44,7 +45,9 @@ export const api = {
   createEpisode: (pid: string, title?: string) => call<Episode>('POST', `/api/projects/${pid}/episodes`, { title }),
   renameEpisode: (pid: string, eid: string, title: string) => call<Episode>('PUT', `/api/projects/${pid}/episodes/${eid}`, { title }),
   canvas: (pid: string, eid: string) => call<CanvasFile>('GET', `/api/projects/${pid}/episodes/${eid}/canvas`),
-  saveCanvas: (pid: string, eid: string, c: CanvasFile) => call('PUT', `/api/projects/${pid}/episodes/${eid}/canvas`, c),
+  /** keepalive：关页面时用，浏览器会在页面关掉后把请求发完（请求体要小于 64KB） */
+  saveCanvas: (pid: string, eid: string, c: CanvasFile, keepalive = false) =>
+    call('PUT', `/api/projects/${pid}/episodes/${eid}/canvas`, c, keepalive),
 
   characters: (pid: string) => call<Character[]>('GET', `/api/projects/${pid}/characters`),
   saveCharacter: (pid: string, c: Partial<Character>) =>

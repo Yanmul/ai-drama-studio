@@ -191,20 +191,40 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     if (loaded) setNodes((ns) => applyJobs(ns, jobs, episode.id));
   }, [jobs, loaded, episode.id]);
 
-  // —— 自动保存（停手 0.8 秒后存） ——
-  const save = useCallback(() => {
-    const body: CanvasFile = {
-      nodes: rf.getNodes().map((n) => ({ id: n.id, type: 'media', position: n.position, data: n.data })),
-      edges: rf.getEdges().map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle })),
-      viewport: viewport.current,
-    };
-    api.saveCanvas(project.id, episode.id, body).catch((e) => toast(`保存失败：${e.message}`, 'error'));
-  }, [project.id, episode.id]);
+  // —— 自动保存（停手 0.8 秒后存；切集、回主页、关页面时把没存的立刻存掉） ——
+  // 用这张画布自己的 nodes / edges 状态，不用 rf.getNodes()：卸载时 React Flow 的 store 可能已经换成下一张画布
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
+  const edgesRef = useRef(edges);
+  edgesRef.current = edges;
+  const dirty = useRef(false);
+  /** 存盘；返回请求体是否小到能用 keepalive（关页面时也能发完） */
+  const save = useCallback(
+    (keepalive = false): boolean => {
+      window.clearTimeout(saveTimer.current);
+      dirty.current = false;
+      const body: CanvasFile = {
+        nodes: nodesRef.current.map((n) => ({ id: n.id, type: 'media', position: n.position, data: n.data })),
+        edges: edgesRef.current.map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle })),
+        viewport: viewport.current,
+      };
+      const small = JSON.stringify(body).length < 60_000;
+      api.saveCanvas(project.id, episode.id, body, keepalive && small).catch((e) => toast(`保存失败：${e.message}`, 'error'));
+      return small;
+    },
+    [project.id, episode.id],
+  );
+  const scheduleSave = () => {
+    dirty.current = true;
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => save(), 800);
+  };
+  const saveRef = useRef(save);
+  saveRef.current = save;
 
   useEffect(() => {
     if (!loaded) return;
-    window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(save, 800);
+    scheduleSave();
     if (restoring.current) {
       restoring.current = false;
       return;
@@ -215,7 +235,20 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     }, 400);
   }, [nodes, edges, loaded, save]);
 
-  useEffect(() => () => window.clearTimeout(saveTimer.current), []);
+  useEffect(() => {
+    // 关页面 / 刷新：画布小就用 keepalive 发出去；太大发不完，就让浏览器弹「确定离开吗」，趁这会儿存完
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!dirty.current) return;
+      if (!saveRef.current(true)) e.preventDefault();
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      // 切集、回主页：组件卸载前把还没存的存掉
+      if (dirty.current) saveRef.current();
+      window.clearTimeout(saveTimer.current);
+    };
+  }, []);
 
   // —— 节点操作 ——
   const countOf = (kind: NodeKind) => rf.getNodes().filter((n) => n.data.kind === kind).length;
@@ -498,8 +531,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           }}
           onMoveEnd={(_, vp) => {
             viewport.current = vp;
-            window.clearTimeout(saveTimer.current);
-            saveTimer.current = window.setTimeout(save, 800);
+            scheduleSave();
           }}
           selectionOnDrag={tool === 'select'}
           panOnDrag={tool === 'hand' ? true : [1]}
