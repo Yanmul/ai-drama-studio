@@ -34,7 +34,8 @@ export const paths = {
 /** 防止 ../ 跳出工作文件夹 */
 export function safe(name: string): string {
   const s = String(name).replace(/[\\/]/g, '_').replace(/\.\.+/g, '_').trim();
-  if (!s) throw new Error('非法名称');
+  // 「.」会被 path.join 当成上一层目录本身；点开头的是 .trash 这类隐藏目录，都不允许
+  if (!s || s.startsWith('.')) throw new Error('非法名称');
   return s;
 }
 
