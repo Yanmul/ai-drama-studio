@@ -110,12 +110,8 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
               <img src={fileUrl(v.file)} draggable={false} onLoad={(e) => setDims(`${e.currentTarget.naturalWidth} × ${e.currentTarget.naturalHeight}`)} />
             )}
             {fileKind(v.file) === 'video' && (
-              <video
-                className="nodrag"
+              <HoverVideo
                 src={fileUrl(v.file)}
-                controls
-                loop
-                playsInline
                 onLoadedMetadata={(e) => setDims(`${e.currentTarget.videoWidth} × ${e.currentTarget.videoHeight} · ${Math.round(e.currentTarget.duration)}s`)}
               />
             )}
@@ -211,3 +207,49 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
 }
 
 export const MediaNode = memo(MediaNodeImpl);
+
+/**
+ * 视频：鼠标移上去就静音预览，移开就暂停；点三角照常播放。
+ * 预览时点了小喇叭（开声音）或者自己点了播放 / 暂停，就算「正式在看」，移开鼠标不再自动暂停。
+ */
+function HoverVideo({ src, onLoadedMetadata }: { src: string; onLoadedMetadata: React.ReactEventHandler<HTMLVideoElement> }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const previewing = useRef(false);
+  const starting = useRef(false); // 我们自己调 play() 引起的 play 事件，不算用户操作
+  return (
+    <video
+      ref={ref}
+      className="nodrag"
+      src={src}
+      controls
+      loop
+      playsInline
+      preload="metadata"
+      onLoadedMetadata={onLoadedMetadata}
+      onMouseEnter={() => {
+        const el = ref.current;
+        if (!el || !el.paused) return;
+        el.muted = true;
+        previewing.current = true;
+        starting.current = true;
+        el.play()
+          .catch(() => (previewing.current = false))
+          .finally(() => (starting.current = false));
+      }}
+      onMouseLeave={() => {
+        const el = ref.current;
+        if (el && previewing.current) el.pause();
+        previewing.current = false;
+      }}
+      onVolumeChange={(e) => {
+        if (!e.currentTarget.muted) previewing.current = false;
+      }}
+      onPlay={() => {
+        if (!starting.current) previewing.current = false;
+      }}
+      onPause={() => {
+        previewing.current = false;
+      }}
+    />
+  );
+}
