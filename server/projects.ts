@@ -169,7 +169,24 @@ export function saveCanvas(pid: string, eid: string, canvas: CanvasFile): Promis
 }
 
 /** 在保存队列里写画布（调用方已经拿到队列锁）；返回新的 savedAt */
+const SAFE_KEEP = 30; // 另存的保险版本（变空之前 / 恢复之前）最多留几份
+const KEEP_RE = /^canvas\.json\.keep-(empty|restore)-\d+$/;
+
+/** 把现在的画布单独另存一份（不参与 bak 轮换）；reason：empty = 变空之前，restore = 恢复历史版本之前 */
+async function keepCopy(file: string, reason: 'empty' | 'restore') {
+  if (!fs.existsSync(file)) return;
+  await fsp.copyFile(file, `${file}.keep-${reason}-${Date.now()}`).catch(() => undefined);
+  const dir = path.dirname(file);
+  const keeps = (await fsp.readdir(dir).catch(() => [] as string[])).filter((n) => KEEP_RE.test(n)).sort((a, b) => Number(a.split('-').pop()) - Number(b.split('-').pop()));
+  for (const old of keeps.slice(0, Math.max(0, keeps.length - SAFE_KEEP))) await fsp.rm(path.join(dir, old), { force: true });
+}
+
 async function writeCanvasLocked(file: string, disk: CanvasFile | null, content: Omit<CanvasFile, 'savedAt' | 'baseSavedAt'>) {
+  // 保险：画布要变空、或一下少了一大半节点（至少 5 个）时，先把原来那份单独另存（canvas.json.keep-empty-时间）。
+  // 不参与 bak1…bak20 的轮换，不会被后面的自动保存挤掉；在「历史版本」里能看到、能恢复
+  const before = Array.isArray(disk?.nodes) ? disk!.nodes.length : 0;
+  const after = Array.isArray(content.nodes) ? content.nodes.length : 0;
+  if (before > 0 && (after === 0 || (before - after >= 5 && after < before / 2))) await keepCopy(file, 'empty');
   // 自动保存很频繁，历史版本最多每 2 分钟留一份
   const last = lastBackup.get(file) || 0;
   if (Date.now() - last > 120_000) {
@@ -228,31 +245,39 @@ export async function deleteCharacter(pid: string, cid: string) {
 
 export async function listCanvasBackups(pid: string, eid: string) {
   const file = paths.canvas(pid, eid);
-  const out: { name: string; savedAt?: string; nodeCount: number }[] = [];
-  for (let i = 1; i <= 20; i++) {
-    const name = `canvas.json.bak${i}`;
+  const dir = path.dirname(file);
+  // 自动轮换的 bak1…bak20，加上「变空之前」另存的 safe-时间
+  const names = [
+    ...Array.from({ length: 20 }, (_, i) => `canvas.json.bak${i + 1}`),
+    ...(await fsp.readdir(dir).catch(() => [] as string[])).filter((n) => KEEP_RE.test(n)),
+  ];
+  const out: { name: string; savedAt?: string; nodeCount: number; kept?: 'empty' | 'restore' }[] = [];
+  for (const name of names) {
     try {
-      const c = JSON.parse(await fsp.readFile(`${file}.bak${i}`, 'utf8'));
+      const c = JSON.parse(await fsp.readFile(path.join(dir, name), 'utf8'));
       if (!c || !Array.isArray(c.nodes)) continue;
-      out.push({ name, savedAt: c.savedAt, nodeCount: c.nodes.length });
+      const kept = KEEP_RE.exec(name)?.[1] as 'empty' | 'restore' | undefined;
+      out.push({ name, savedAt: c.savedAt, nodeCount: c.nodes.length, kept });
     } catch {
       /* 没有这个备份，或者备份本身也坏了 */
     }
   }
-  return out;
+  // 新的在前
+  return out.sort((a, b) => (b.savedAt || '').localeCompare(a.savedAt || ''));
 }
 
 /** 用某个历史版本恢复。走正常保存流程：现在这份会被轮换进 bak1，不会丢 */
 export async function restoreCanvasBackup(pid: string, eid: string, name: string) {
-  const m = /^canvas\.json\.bak([1-9]|1\d|20)$/.exec(name);
-  if (!m) throw new Error('备份名称不对');
+  if (!/^canvas\.json\.bak([1-9]|1\d|20)$/.test(name) && !KEEP_RE.test(name)) throw new Error('备份名称不对');
   let c: any;
   try {
-    c = JSON.parse(await fsp.readFile(`${paths.canvas(pid, eid)}.bak${m[1]}`, 'utf8'));
+    c = JSON.parse(await fsp.readFile(path.join(path.dirname(paths.canvas(pid, eid)), name), 'utf8'));
   } catch (e: any) {
     throw new Error(e?.code === 'ENOENT' ? '这个历史版本已经不在了，刷新一下列表' : '这个备份也读不出来，换一个试试');
   }
   if (!c || !Array.isArray(c.nodes) || !Array.isArray(c.edges)) throw new Error('这个备份也读不出来，换一个试试');
+  // 恢复前把现在的画布另存一份（bak 每 2 分钟才轮换一次，不能指望它）
+  await keepCopy(paths.canvas(pid, eid), 'restore');
   await saveCanvas(pid, eid, c);
   return { ok: true };
 }

@@ -2551,6 +2551,26 @@ input.short {
   gap: 10px;
   margin-top: 6px;
 }
+.history-modal {
+  width: 560px;
+}
+.history-modal .modal-head b {
+  white-space: nowrap;
+}
+.history-modal .le-backups {
+  max-height: 60vh;
+}
+.le-backups .ghost {
+  justify-content: space-between;
+}
+.safe-tag {
+  margin-left: 10px;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  color: var(--warn);
+  background: rgba(251, 191, 36, 0.12);
+}
 .le-backups {
   display: flex;
   flex-direction: column;

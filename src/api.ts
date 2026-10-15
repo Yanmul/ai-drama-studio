@@ -72,7 +72,8 @@ export const api = {
   /** keepalive：关页面时用，浏览器会在页面关掉后把请求发完（请求体要小于 64KB） */
   saveCanvas: (pid: string, eid: string, c: CanvasFile, keepalive = false) =>
     call<{ ok: boolean; savedAt?: string }>('PUT', `/api/projects/${pid}/episodes/${eid}/canvas`, c, keepalive),
-  canvasBackups: (pid: string, eid: string) => call<{ name: string; savedAt?: string; nodeCount: number }[]>('GET', `/api/projects/${pid}/episodes/${eid}/backups`),
+  canvasBackups: (pid: string, eid: string) =>
+    call<{ name: string; savedAt?: string; nodeCount: number; kept?: 'empty' | 'restore' }[]>('GET', `/api/projects/${pid}/episodes/${eid}/backups`),
   restoreBackup: (pid: string, eid: string, name: string) => call('POST', `/api/projects/${pid}/episodes/${eid}/backups/${encodeURIComponent(name)}/restore`),
 
   characters: (pid: string) => call<Character[]>('GET', `/api/projects/${pid}/characters`),

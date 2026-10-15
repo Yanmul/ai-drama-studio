@@ -18,7 +18,7 @@ import {
   type Viewport,
 } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Archive, Check, Clock, Hand, Loader2, Maximize, Minus, MousePointer2, PanelLeft, Plus, Redo2, RotateCcw, Undo2, UsersRound } from 'lucide-react';
+import { AlertTriangle, Archive, Check, Clock, Hand, History, Loader2, Maximize, Minus, MousePointer2, PanelLeft, Plus, Redo2, RotateCcw, Undo2, UsersRound, X } from 'lucide-react';
 import type { CanvasFile, Episode, Job, NodeData, NodeKind, Project, Version } from '../shared/types';
 import { api } from './api';
 import { AddNodeMenu, type AddMenuAction } from './components/AddNodeMenu';
@@ -428,6 +428,23 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       window.clearTimeout(saveTimer.current);
       setReloadTick((t) => t + 1);
     }
+  };
+
+  // 恢复历史版本前：停掉自动保存、丢掉排队的保存（读完新内容后自动恢复）
+  const pauseForRestore = () => {
+    paused.current = true;
+    dirty.current = false;
+    again.current = false;
+    window.clearTimeout(saveTimer.current);
+  };
+  const [showHistory, setShowHistory] = useState(false);
+  // 弹窗里恢复：页面上没存的改动先存掉（这样「恢复之前另存」里有它），再停掉自动保存
+  const flushThenPause = async () => {
+    window.clearTimeout(saveTimer.current);
+    if (dirty.current && !paused.current) {
+      await api.saveCanvas(project.id, episode.id, bodyNow()).catch(() => undefined);
+    }
+    pauseForRestore();
   };
 
   const scheduleSave = () => {
@@ -947,6 +964,9 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
             <Hand size={16} />
           </button>
           <span className="tool-sep" />
+          <button title="历史版本：找回之前的画布" onClick={() => setShowHistory(true)}>
+            <History size={16} />
+          </button>
           <span
             className={`save-state ${saveState}`}
             title={saveState === 'error' ? '保存失败，点一下重试（⌘S）' : '改动会自动保存；⌘S 立即保存'}
@@ -1004,6 +1024,34 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           />
         )}
 
+        {showHistory && (
+          <div className="modal-mask" onMouseDown={(e) => e.target === e.currentTarget && setShowHistory(false)}>
+            <div className="modal history-modal">
+              <div className="modal-head">
+                <b>历史版本</b>
+                <span className="muted">每 2 分钟自动留一份；画布变空、恢复之前也会另存</span>
+                <span className="spacer" />
+                <button className="icon" onClick={() => setShowHistory(false)}>
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="pad">
+                <BackupRestore
+                  autoLoad
+                  projectId={project.id}
+                  episodeId={episode.id}
+                  beforeRestore={flushThenPause}
+                  onRestored={() => {
+                    setShowHistory(false);
+                    setReloadTick((t) => t + 1);
+                    toast('已恢复。恢复前的画布留在了历史版本里');
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
         {loadError && (
           <div className="load-error">
             <AlertTriangle size={22} />
@@ -1013,7 +1061,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
               <button className="primary" onClick={() => setReloadTick((t) => t + 1)}>
                 <RotateCcw size={14} /> 重试
               </button>
-              <BackupRestore projectId={project.id} episodeId={episode.id} onRestored={() => setReloadTick((t) => t + 1)} />
+              <BackupRestore projectId={project.id} episodeId={episode.id} beforeRestore={pauseForRestore} onRestored={() => setReloadTick((t) => t + 1)} />
             </div>
           </div>
         )}
@@ -1068,34 +1116,60 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
   );
 }
 
-/** 画布读不出来时：列出自动留的历史版本（.bak），挑一个恢复 */
-function BackupRestore({ projectId, episodeId, onRestored }: { projectId: string; episodeId: string; onRestored: () => void }) {
-  const [list, setList] = useState<{ name: string; savedAt?: string; nodeCount: number }[] | null>(null);
+/** 画布的历史版本：自动留的 bak1…bak20，加上「变空之前」另存的保险版本；挑一个恢复 */
+function BackupRestore({
+  projectId,
+  episodeId,
+  onRestored,
+  beforeRestore,
+  autoLoad,
+}: {
+  projectId: string;
+  episodeId: string;
+  onRestored: () => void;
+  /** 恢复前调用：存掉页面上没存的改动，再停掉自动保存，免得旧内容又把恢复结果盖掉 */
+  beforeRestore?: () => void | Promise<void>;
+  autoLoad?: boolean;
+}) {
+  const [list, setList] = useState<{ name: string; savedAt?: string; nodeCount: number; kept?: 'empty' | 'restore' }[] | null>(null);
   const [err, setErr] = useState('');
   const load = () =>
     api
       .canvasBackups(projectId, episodeId)
       .then(setList)
       .catch((e) => setErr(e.message));
+  useEffect(() => {
+    if (autoLoad) load();
+  }, []);
   if (!list)
     return (
       <>
-        <button className="ghost" onClick={load}>
-          <Clock size={14} /> 从历史版本恢复
-        </button>
+        {!autoLoad && (
+          <button className="ghost" onClick={load}>
+            <Clock size={14} /> 从历史版本恢复
+          </button>
+        )}
+        {autoLoad && !err && <div className="le-msg">读取中…</div>}
         {err && <div className="le-msg">{err}</div>}
       </>
     );
-  if (!list.length) return <div className="le-msg">没有可以恢复的历史版本</div>;
+  if (!list.length) return <div className="le-msg">还没有历史版本（改动保存后每 2 分钟留一份）</div>;
+  const when = (b: { savedAt?: string; name: string }) => (b.savedAt ? new Date(b.savedAt).toLocaleString() : b.name);
   return (
     <div className="le-backups">
       {list.map((b) => (
         <button
           key={b.name}
-          className="ghost"
+          className={`ghost ${b.kept ? 'kept' : ''}`}
+          title={b.kept === 'empty' ? '画布变空 / 一下少了很多节点之前，自动另存的一份' : b.kept === 'restore' ? '恢复历史版本之前，自动另存的一份' : '自动保存时留的历史版本'}
           onClick={async () => {
-            const ok = await confirmDialog({ title: '用这个历史版本恢复？', message: `${b.savedAt ? new Date(b.savedAt).toLocaleString() : b.name} · ${b.nodeCount} 个节点\n现在这份读不出来的画布会先另存一份，不会丢。`, okText: '恢复' });
+            const ok = await confirmDialog({
+              title: '用这个历史版本恢复？',
+              message: `${when(b)} · ${b.nodeCount} 个节点\n现在的画布会先另存一份（列表里标「恢复之前另存」），不会丢。`,
+              okText: '恢复',
+            });
             if (!ok) return;
+            await beforeRestore?.();
             try {
               await api.restoreBackup(projectId, episodeId, b.name);
               onRestored();
@@ -1104,7 +1178,8 @@ function BackupRestore({ projectId, episodeId, onRestored }: { projectId: string
             }
           }}
         >
-          {b.savedAt ? new Date(b.savedAt).toLocaleString() : b.name} · {b.nodeCount} 个节点
+          {when(b)} · {b.nodeCount} 个节点
+          {b.kept && <span className="safe-tag">{b.kept === 'empty' ? '变空之前另存' : '恢复之前另存'}</span>}
         </button>
       ))}
       {err && <div className="le-msg">{err}</div>}
