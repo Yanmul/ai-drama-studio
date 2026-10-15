@@ -28,9 +28,11 @@ events.setMaxListeners(100);
 
 const jobs = new Map<string, Job>();
 const running = new Map<string, number>(); // providerId -> 正在跑的数量
-const cancelled = new Set<string>();
 const MAX_RETRY = 2;
 const POLL_TIMEOUT_MS = 30 * 60 * 1000;
+
+// 取消直接看任务状态：cancelJob 会立刻把状态改成 cancelled，正在跑的流程每一步都检查它
+const isCancelled = (job: Job) => job.status === 'cancelled';
 
 function activeFile(id: string) {
   return path.join(paths.jobsActive(), `${id}.json`);
@@ -134,17 +136,22 @@ async function start(job: Job) {
   }
   const adapter = ADAPTERS[ctx.provider.type];
   for (;;) {
-    if (cancelled.has(job.id)) return;
+    if (isCancelled(job)) return;
     job.attempts += 1;
     try {
       const r = await adapter.submit(ctx, prepared);
-      if (cancelled.has(job.id)) return;
+      if (isCancelled(job)) {
+        // 提交途中点了取消：远端任务已经建好，顺手取消掉，免得白白跑完扣费
+        if (r.kind === 'pending') adapter.cancel?.(ctx, r.remoteId).catch(() => undefined);
+        return;
+      }
       if (r.kind === 'done') return succeed(job, r.outputs, r.cost);
       job.remoteId = r.remoteId;
       job.note = '已提交，等待结果';
       await persist(job);
       return pollLoop(job, ctx);
     } catch (e: any) {
+      if (isCancelled(job)) return;
       if (e instanceof AdapterError && e.retryable && job.attempts <= MAX_RETRY) {
         job.note = `出错重试（第 ${job.attempts} 次）：${e.message}`;
         await persist(job);
@@ -168,11 +175,12 @@ async function pollLoop(job: Job, ctx: AdapterContext) {
   for (;;) {
     await sleep(delay);
     delay = Math.min(15000, Math.round(delay * 1.4));
-    if (cancelled.has(job.id) || job.status !== 'running') return;
+    if (job.status !== 'running') return;
     if (Date.now() - startAt > POLL_TIMEOUT_MS) return fail(job, new Error('超过 30 分钟还没出结果，按超时处理'));
     try {
       const r = await adapter.poll(ctx, job.remoteId!);
       errors = 0;
+      if (job.status !== 'running') return;
       if (r.status === 'succeeded') return succeed(job, r.outputs || [], r.cost);
       if (r.status === 'failed') return fail(job, new Error(r.error || '生成失败'));
       if (r.note && r.note !== job.note) {
@@ -180,6 +188,7 @@ async function pollLoop(job: Job, ctx: AdapterContext) {
         await persist(job);
       }
     } catch (e: any) {
+      if (job.status !== 'running') return;
       errors += 1;
       if (errors >= 5) return fail(job, e);
       job.note = `查询出错，稍后再试：${e?.message || e}`;
@@ -244,13 +253,16 @@ async function saveOutputs(job: Job, outs: RemoteOutput[], cost?: number) {
     const { projectId, episodeId, nodeId } = job.request;
     const dir = paths.nodeAssets(projectId, episodeId, nodeId);
     await ensureDir(dir);
+    // 先全部下载完，确认没被取消再落盘，免得「已取消」的任务把文件塞进节点
+    const fetched: { o: RemoteOutput; buf?: Buffer; mime?: string }[] = [];
+    for (const o of outs) fetched.push(o.kind === 'text' ? { o } : { o, ...(await download(o)) });
+    if (isCancelled(job)) return;
     const saved: OutputItem[] = [];
-    for (const o of outs) {
-      if (o.kind === 'text') {
+    for (const { o, buf, mime } of fetched) {
+      if (!buf) {
         saved.push({ kind: 'text', text: o.text || '' });
         continue;
       }
-      const { buf, mime } = await download(o);
       const fallback = o.kind === 'video' ? '.mp4' : o.kind === 'audio' ? '.mp3' : '.png';
       const ext = extFromMime(mime || o.mime || '', fallback);
       const no = await nextVersionNo(dir);
@@ -267,6 +279,7 @@ async function saveOutputs(job: Job, outs: RemoteOutput[], cost?: number) {
       });
       saved.push({ kind: o.kind, file: rel(file) });
     }
+    if (isCancelled(job)) return;
     job.outputs = saved;
     job.status = 'succeeded';
     job.note = undefined;
@@ -283,7 +296,7 @@ async function saveOutputs(job: Job, outs: RemoteOutput[], cost?: number) {
 }
 
 async function fail(job: Job, e: any) {
-  if (cancelled.has(job.id)) return;
+  if (isCancelled(job)) return;
   job.status = 'failed';
   job.error = String(e?.message || e);
   job.note = undefined;
@@ -294,19 +307,18 @@ async function fail(job: Job, e: any) {
 export async function cancelJob(id: string): Promise<Job | undefined> {
   const job = jobs.get(id);
   if (!job || !['queued', 'running'].includes(job.status)) return job;
-  cancelled.add(id);
-  if (job.status === 'running' && job.remoteId) {
-    try {
-      const ctx = await contextFor(job);
-      await ADAPTERS[ctx.provider.type].cancel?.(ctx, job.remoteId);
-    } catch {
-      /* 取消不了就只是不再查询 */
-    }
-  }
+  // 先改状态：正在跑的提交、轮询、下载看到 cancelled 就会停下，不会再把它改回成功
+  const remoteId = job.status === 'running' ? job.remoteId : undefined;
   job.status = 'cancelled';
   job.note = undefined;
   job.finishedAt = nowIso();
   await persist(job);
+  if (remoteId) {
+    // 远端取消可能要等十几秒，放后台做；取消不了就只是不再查询
+    contextFor(job)
+      .then((ctx) => ADAPTERS[ctx.provider.type].cancel?.(ctx, remoteId))
+      .catch(() => undefined);
+  }
   return job;
 }
 
