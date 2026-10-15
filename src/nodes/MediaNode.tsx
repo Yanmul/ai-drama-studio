@@ -2,7 +2,7 @@
 // 选中节点时，下方弹出生成面板（GeneratePanel）。
 import { Handle, NodeToolbar, Position, useReactFlow, type Node, type NodeProps } from '@xyflow/react';
 import { memo, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ChevronLeft, ChevronRight, FileText, Image as ImageIcon, Loader2, Music, Play, ScrollText, Star, Upload, UserRound, Wand2 } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, ChevronRight, Download, FileText, Image as ImageIcon, Loader2, Music, Play, ScrollText, Star, Upload, UserRound, Wand2 } from 'lucide-react';
 import type { NodeData, Version } from '../../shared/types';
 import { api, fileUrl } from '../api';
 import { useApp, useCanvas } from '../context';
@@ -168,6 +168,17 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
                 <ChevronRight size={14} />
               </button>
               <span className="spacer" />
+              {isMedia && v?.file && (
+                // 下载当前显示的这一版，文件名：节点标题-v版本号.扩展名
+                <a
+                  className="icon"
+                  title="下载这一版"
+                  href={fileUrl(v.file)}
+                  download={`${(data.title || KIND_LABEL[data.kind]).replace(/[\\/:*?"<>|]/g, '_')}-v${data.current + 1}${v.file.match(/\.[^./]+$/)?.[0] || ''}`}
+                >
+                  <Download size={13} />
+                </a>
+              )}
               {isMedia && (
                 <button className="icon" title="上传替换（新增一个版本）" onClick={() => fileInput.current?.click()}>
                   <Upload size={13} />
