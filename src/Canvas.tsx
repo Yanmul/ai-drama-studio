@@ -3,7 +3,6 @@
 import {
   Background,
   BackgroundVariant,
-  Controls,
   MiniMap,
   ReactFlow,
   SelectionMode,
@@ -11,6 +10,7 @@ import {
   useEdgesState,
   useNodesState,
   useReactFlow,
+  useViewport,
   type Connection,
   type Edge,
   type FinalConnectionState,
@@ -18,7 +18,7 @@ import {
   type Viewport,
 } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Archive, Check, Clock, Hand, Loader2, MousePointer2, Plus, Redo2, RotateCcw, Undo2, UsersRound } from 'lucide-react';
+import { AlertTriangle, Archive, Check, Clock, Hand, Loader2, Maximize, Minus, MousePointer2, PanelLeft, Plus, Redo2, RotateCcw, Undo2, UsersRound } from 'lucide-react';
 import type { CanvasFile, Episode, Job, NodeData, NodeKind, Project, Version } from '../shared/types';
 import { api } from './api';
 import { AddNodeMenu, type AddMenuAction } from './components/AddNodeMenu';
@@ -29,8 +29,8 @@ import { KIND_CAP, KIND_LABEL, makeNodeData, newId, pickModel } from './lib';
 import { MediaNode } from './nodes/MediaNode';
 import { FlowEdge } from './edges/FlowEdge';
 import { SelectionBar } from './components/SelectionBar';
-import { AssetLibrary } from './components/Modals';
 import { confirmDialog } from './components/Dialog';
+import { AssetPanel } from './components/AssetPanel';
 
 type FlowNode = Node<NodeData>;
 const nodeTypes = { media: MediaNode };
@@ -72,7 +72,14 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
   const [loaded, setLoaded] = useState(false);
   // 鼠标工具：select = 左键拖动框选（空格 / 中键拖动平移）；hand = 左键拖动平移
   const [tool, setTool] = useState<'select' | 'hand'>(() => (localStorage.getItem('canvasTool') as any) || 'select');
-  const [showAssets, setShowAssets] = useState(false);
+  // 左侧「资产管理」面板
+  const [panel, setPanel] = useState<null | 'canvas' | 'assets'>(() => {
+    try {
+      return (localStorage.getItem('assetPanel') as any) || null;
+    } catch {
+      return null;
+    }
+  });
   const [menu, setMenu] = useState<{ x: number; y: number; connectFrom?: string; connectTo?: string } | null>(null);
   const viewport = useRef<Viewport | undefined>(undefined);
   const saveTimer = useRef<number | undefined>(undefined);
@@ -700,8 +707,10 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
   useEffect(() => {
     try {
       localStorage.setItem('canvasTool', tool);
+      if (panel) localStorage.setItem('assetPanel', panel);
+      else localStorage.removeItem('assetPanel');
     } catch {}
-  }, [tool]);
+  }, [tool, panel]);
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -751,7 +760,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
   return (
     <CanvasContext.Provider value={ctx}>
       <div
-        className="canvas-wrap"
+        className={`canvas-wrap ${panel ? 'panel-open' : ''}`}
         onMouseMove={(e) => (mouse.current = { x: e.clientX, y: e.clientY })}
         onDoubleClick={(e) => {
           if ((e.target as HTMLElement).classList.contains('react-flow__pane')) setMenu({ x: e.clientX, y: e.clientY });
@@ -815,7 +824,6 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           defaultEdgeOptions={{ type: 'default' }}
         >
           <Background variant={BackgroundVariant.Dots} gap={24} size={1.3} color="#2a2a31" />
-          <Controls position="bottom-left" showInteractive={false} />
           <MiniMap position="bottom-right" pannable zoomable nodeColor="#3a3a3a" maskColor="rgba(0,0,0,.55)" />
           <SelectionBar
             undo={undo}
@@ -880,16 +888,20 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           >
             <Clock size={18} />
           </button>
-          <button title="资产库（所有画布共用）" onClick={() => setShowAssets(true)}>
+          <button title="资产库（所有画布共用）" onClick={() => setPanel(panel === 'assets' ? null : 'assets')}>
             <Archive size={18} />
           </button>
         </div>
 
-        {showAssets && (
-          <AssetLibrary
-            onClose={() => setShowAssets(false)}
-            onPick={(a) => {
-              const pos = rf.screenToFlowPosition(centerScreen());
+        {panel && (
+          <AssetPanel
+            tab={panel}
+            setTab={setPanel}
+            nodes={nodes}
+            undo={undo}
+            onClose={() => setPanel(null)}
+            onPlaceAsset={(a) => {
+              const pos = rf.screenToFlowPosition({ x: window.innerWidth / 2 + 80, y: window.innerHeight / 2 - 160 });
               if (a.file) addNode(a.kind, pos, { title: a.name, version: { kind: a.kind as any, file: a.file, label: '资产' } });
               else addNode(a.kind, pos, { title: a.name, text: a.text });
             }}
@@ -909,6 +921,8 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
             </div>
           </div>
         )}
+
+        <BottomBar panelOpen={!!panel} onTogglePanel={() => setPanel(panel ? null : 'canvas')} />
 
         {loaded && nodes.length === 0 && (
           <div className="empty-tip">
@@ -998,6 +1012,32 @@ function BackupRestore({ projectId, episodeId, onRestored }: { projectId: string
         </button>
       ))}
       {err && <div className="le-msg">{err}</div>}
+    </div>
+  );
+}
+
+/** 左下角：资产管理开关 + 缩放 */
+function BottomBar({ panelOpen, onTogglePanel }: { panelOpen: boolean; onTogglePanel: () => void }) {
+  const rf = useReactFlow();
+  const { zoom } = useViewport();
+  return (
+    <div className="bottom-bar">
+      <button className={`bb-assets ${panelOpen ? 'on' : ''}`} onClick={onTogglePanel} title="资产管理：画布上的所有节点、资产库">
+        <PanelLeft size={16} /> 资产管理
+      </button>
+      <span className="tool-sep" />
+      <button title="缩小" onClick={() => rf.zoomOut({ duration: 200 })}>
+        <Minus size={15} />
+      </button>
+      <button className="bb-zoom" title="恢复 100%" onClick={() => rf.zoomTo(1, { duration: 250 })}>
+        {Math.round(zoom * 100)}%
+      </button>
+      <button title="放大" onClick={() => rf.zoomIn({ duration: 200 })}>
+        <Plus size={15} />
+      </button>
+      <button className="bb-fit" title="显示全部节点" onClick={() => rf.fitView({ padding: 0.15, duration: 400 })}>
+        <Maximize size={14} />
+      </button>
     </div>
   );
 }
