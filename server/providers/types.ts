@@ -67,12 +67,19 @@ export interface Adapter {
   refLabel?(kind: 'image' | 'video' | 'audio', n: number, model: ProviderModelConfig): string;
 }
 
-/** 适配器抛的错。retryable = 网络抖动、限流这类可以自动重试的 */
+/**
+ * 适配器抛的错。
+ * retryable = 请求肯定没被厂商收下（连不上、限流），可以放心自动重试；
+ * uncertain = 请求可能已经被收下（超时、连接中断、5xx），重试有重复扣费的风险，不自动重试。
+ */
 export class AdapterError extends Error {
-  constructor(message: string, public retryable = false) {
+  constructor(message: string, public retryable = false, public uncertain = false) {
     super(message);
   }
 }
+
+// 这些错误说明连接都没建立起来，请求肯定没发到厂商
+const NOT_SENT_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT']);
 
 /** 带超时的请求，统一把厂商的报错翻成一句话 */
 export async function httpJson<T = any>(
@@ -90,8 +97,10 @@ export async function httpJson<T = any>(
       signal: ctrl.signal,
     });
   } catch (e: any) {
-    const msg = e?.name === 'AbortError' ? '请求超时' : `网络错误：${e?.cause?.code || e?.message || e}`;
-    throw new AdapterError(`${msg}（${shortUrl(url)}）`, true);
+    const code = e?.cause?.code;
+    const msg = e?.name === 'AbortError' ? '请求超时' : `网络错误：${code || e?.message || e}`;
+    const notSent = e?.name !== 'AbortError' && NOT_SENT_CODES.has(code);
+    throw new AdapterError(`${msg}（${shortUrl(url)}）`, notSent, !notSent);
   } finally {
     clearTimeout(timer);
   }
@@ -103,8 +112,7 @@ export async function httpJson<T = any>(
     /* 不是 JSON */
   }
   if (!resp.ok) {
-    const retryable = resp.status === 429 || resp.status >= 500;
-    throw new AdapterError(`HTTP ${resp.status}：${errorText(data, text)}`, retryable);
+    throw new AdapterError(`HTTP ${resp.status}：${errorText(data, text)}`, resp.status === 429, resp.status >= 500);
   }
   return (data ?? {}) as T;
 }

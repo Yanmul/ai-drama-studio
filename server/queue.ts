@@ -151,6 +151,9 @@ async function start(job: Job) {
         await sleep(2000 * job.attempts);
         continue;
       }
+      if (e instanceof AdapterError && e.uncertain) {
+        return fail(job, new Error(`${e.message}。厂商可能已经收下这个任务并扣费，为避免重复扣费没有自动重试，请先到厂商控制台确认`));
+      }
       return fail(job, e);
     }
   }
