@@ -4,6 +4,7 @@ import { Clapperboard, Eraser, LayoutGrid, Loader2, MoreHorizontal, PenLine, Plu
 import type { CleanupStatus, ProjectSummary } from '../shared/types';
 import { api, fileUrl } from './api';
 import { fileKind } from './lib';
+import { confirmDialog, promptDialog } from './components/Dialog';
 
 function ago(iso: string) {
   const s = (Date.now() - Date.parse(iso)) / 1000;
@@ -134,10 +135,14 @@ export function Home({
                   <button
                     onClick={async () => {
                       setMenu(null);
-                      const name = prompt('画布名称', p.name);
-                      if (!name) return;
-                      await api.updateProject(p.id, { name });
-                      load();
+                      const name = await promptDialog({ title: '重命名画布', defaultValue: p.name });
+                      if (!name || name === p.name) return;
+                      try {
+                        await api.updateProject(p.id, { name });
+                        load();
+                      } catch (e: any) {
+                        toast(e.message, 'error');
+                      }
                     }}
                   >
                     <PenLine size={14} /> 重命名
@@ -146,9 +151,19 @@ export function Home({
                     className="danger"
                     onClick={async () => {
                       setMenu(null);
-                      if (!confirm(`删除画布「${p.name}」？\n文件会挪到 workspace/.trash，不会立刻消失。`)) return;
-                      await api.deleteProject(p.id);
-                      load();
+                      const ok = await confirmDialog({
+                        title: `删除画布「${p.name}」？`,
+                        message: '文件会挪到 workspace/.trash，不会立刻消失。',
+                        okText: '删除',
+                        danger: true,
+                      });
+                      if (!ok) return;
+                      try {
+                        await api.deleteProject(p.id);
+                        load();
+                      } catch (e: any) {
+                        toast(e.message, 'error');
+                      }
                     }}
                   >
                     <Trash2 size={14} /> 删除
@@ -192,7 +207,13 @@ function CleanupInfo({ toast }: { toast: (m: string, k?: 'info' | 'error') => vo
       title={tip}
       disabled={busy}
       onClick={async () => {
-        if (!confirm(`现在就删除 ${s.keepDays} 天前生成 / 上传的文件？\n定稿（⭐）的版本和角色图会保留，删了找不回来。`)) return;
+        const ok = await confirmDialog({
+          title: `现在就删除 ${s.keepDays} 天前生成 / 上传的文件？`,
+          message: '定稿（⭐）的版本、角色图、资产库里的文件会保留；其余删了找不回来。',
+          okText: '立即清理',
+          danger: true,
+        });
+        if (!ok) return;
         setBusy(true);
         try {
           const before = s.lastRun;

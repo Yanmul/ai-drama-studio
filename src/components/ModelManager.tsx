@@ -1,6 +1,9 @@
-// 模型管理：添加服务商（火山引擎 / 中转站 / 演示）、填 key、测试、管理每个服务商下的模型
+// 模型管理：总览已配置的模型；添加服务商（火山引擎 / 中转站）、填 key、测试、管理每个服务商下的模型
 import { Fragment, useEffect, useState } from 'react';
-import { CheckCircle2, CloudDownload, FlaskConical, Loader2, Plus, Trash2, X, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, CloudDownload, FlaskConical, LayoutList, Loader2, Plus, Trash2, X, XCircle } from 'lucide-react';
+import { confirmDialog } from './Dialog';
+import { Popover } from './Popover';
+import { Select } from './Select';
 import type { Capability, CustomTemplate, ProviderModelConfig, ProviderType, ProviderView, RelayProtocol, RemoteModelGuess } from '../../shared/types';
 import { api } from '../api';
 import { useApp } from '../context';
@@ -39,7 +42,19 @@ const RELAY_DEFAULTS: Record<'text' | 'image' | 'video', { protocol: RelayProtoc
   image: { protocol: 'openai-images', preset: 'openai-images' },
   video: { protocol: 'openai-videos', preset: 'openai-videos' },
 };
-const RELAY_CAPS = ['text', 'image', 'video'] as const;
+const ADD_CAPS = ['text', 'image', 'video'] as const;
+type AddCap = (typeof ADD_CAPS)[number];
+
+/** 新加一个某类型的模型：中转站用 OpenAI 兼容格式，火山引擎用方舟的预设 */
+const newModel = (type: ProviderType, cap: AddCap, remoteModel = '', name = ''): ProviderModelConfig => ({
+  id: '',
+  name,
+  capability: cap,
+  remoteModel,
+  preset: type === 'relay' ? RELAY_DEFAULTS[cap].preset : DEFAULT_PRESET[cap],
+  protocol: type === 'relay' ? RELAY_DEFAULTS[cap].protocol : undefined,
+  enabled: true,
+});
 
 /** 快速添加：兼容 OpenAI 格式的常见服务商，地址填好，只差 key。模型 ID 以各家文档为准，也可以添加后点「拉取模型列表」 */
 const QUICK_ADD: { label: string; name: string; baseUrl: string; models: { name: string; remoteModel: string }[] }[] = [
@@ -55,17 +70,6 @@ const QUICK_ADD: { label: string; name: string; baseUrl: string; models: { name:
   { label: '通义千问', name: '通义千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: [] },
   { label: 'Kimi', name: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1', models: [] },
 ];
-
-const fromGuess = (g: RemoteModelGuess): ProviderModelConfig => ({
-  id: '',
-  name: g.remoteModel,
-  capability: g.capability,
-  remoteModel: g.remoteModel,
-  preset: g.preset,
-  protocol: g.protocol,
-  // 自定义模板还没填，先不启用，免得在面板里选到一个跑不通的模型
-  enabled: g.supported && g.protocol !== 'custom',
-});
 
 const toDraft = (p: ProviderView): Draft => ({
   id: p.id,
@@ -84,14 +88,16 @@ const toDraft = (p: ProviderView): Draft => ({
 });
 
 export function ModelManager({ onClose }: { onClose: () => void }) {
-  const { refreshModels, toast } = useApp();
+  const { refreshModels, toast, models } = useApp();
   const [providers, setProviders] = useState<ProviderView[]>([]);
   const [presets, setPresets] = useState<{ id: string; label: string }[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
   const [openTpl, setOpenTpl] = useState<string | null>(null);
   // 拉取到的模型列表（勾选后加进表格）
-  const [pull, setPull] = useState<{ items: RemoteModelGuess[]; picked: Set<string>; q: string } | null>(null);
+  // cap = 这一批要加成什么类型，先选类型再勾选，不按名字猜
+  const [pull, setPull] = useState<PullState | null>(null);
+  const [addMenu, setAddMenu] = useState(false);
   const [pulling, setPulling] = useState(false);
   // 每个模型「试一下」的结果，按模型 id
   const [modelTests, setModelTests] = useState<Record<string, { ok?: boolean; message: string; loading?: boolean }>>({});
@@ -99,7 +105,7 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
   const load = async (selectId?: string) => {
     const ps = await api.providers();
     setProviders(ps);
-    const sel = ps.find((p) => p.id === (selectId ?? draft?.id)) || ps[0];
+    const sel = selectId ? ps.find((p) => p.id === selectId) : undefined;
     if (sel) setDraft(toDraft(sel));
   };
 
@@ -122,7 +128,7 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
       concurrency: 2,
       refMode: 'base64',
       publicBaseUrl: '',
-      models: (quick?.models || []).map((m) => ({ ...fromGuess({ remoteModel: m.remoteModel, capability: 'text', protocol: 'openai-chat', preset: 'chat', supported: true }), name: m.name })),
+      models: (quick?.models || []).map((m) => newModel('relay', 'text', m.remoteModel, m.name)),
     });
   };
 
@@ -130,23 +136,10 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
   const setModel = (i: number, patch: Partial<ProviderModelConfig>) =>
     setDraft((d) => (d ? { ...d, models: d.models.map((m, j) => (j === i ? { ...m, ...patch } : m)) } : d));
 
-  const addModel = () => {
+  const addModel = (cap: AddCap) => {
     if (!draft) return;
-    const cap: Capability = 'video';
-    set({
-      models: [
-        ...draft.models,
-        {
-          id: '',
-          name: '',
-          capability: cap,
-          remoteModel: '',
-          preset: draft.type === 'relay' ? RELAY_DEFAULTS.video.preset : DEFAULT_PRESET[cap],
-          protocol: draft.type === 'relay' ? RELAY_DEFAULTS.video.protocol : undefined,
-          enabled: true,
-        },
-      ],
-    });
+    set({ models: [...draft.models, newModel(draft.type, cap)] });
+    setAddMenu(false);
   };
 
   /** quiet：拉取、试一下之前顺手保存，不弹「已保存」 */
@@ -190,7 +183,7 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
     try {
       const items = await api.remoteModels(saved.id);
       if (!items.length) return toast('这个 key 没有返回任何模型，请手动添加', 'error');
-      setPull({ items, picked: new Set(), q: '' });
+      setPull({ items, picked: new Set(), q: '', cap: null });
     } catch (e: any) {
       toast(`拉取失败：${e.message}`, 'error');
     } finally {
@@ -198,12 +191,14 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
     }
   };
 
+  // 选中的模型都按「添加为」的类型加进表格；列表不关，可以换个类型接着加下一批
   const addPicked = () => {
-    if (!draft || !pull) return;
-    const added = pull.items.filter((g) => pull.picked.has(g.remoteModel)).map(fromGuess);
+    if (!draft || !pull?.cap) return;
+    const cap = pull.cap;
+    const added = pull.items.filter((g) => pull.picked.has(g.remoteModel)).map((g) => newModel(draft.type, cap, g.remoteModel, g.remoteModel));
     set({ models: [...draft.models, ...added] });
-    setPull(null);
-    toast(`加了 ${added.length} 个模型，类型和接口格式是按名字猜的，核对一下再点「保存」`);
+    setPull({ ...pull, picked: new Set() });
+    toast(`加了 ${added.length} 个${CAP_LABEL[cap]}模型，记得点「保存」`);
   };
 
   // 试一下单个模型：先保存，拿到保存后的模型 id 再测
@@ -222,7 +217,13 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
 
   const remove = async () => {
     if (!draft?.id) return setDraft(null);
-    if (!confirm(`删除服务商「${draft.name}」？它下面的模型会一起删掉（已生成的文件不受影响）`)) return;
+    const ok = await confirmDialog({
+      title: `删除服务商「${draft.name}」？`,
+      message: '它下面的模型会一起删掉，已经生成的文件不受影响。',
+      okText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
     await api.deleteProvider(draft.id);
     setDraft(null);
     await load('');
@@ -242,6 +243,18 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
         </div>
         <div className="mm">
           <div className="mm-list">
+            <button
+              className={`mm-item ${!draft ? 'on' : ''}`}
+              onClick={() => {
+                setPull(null);
+                setDraft(null);
+              }}
+            >
+              <LayoutList size={14} className="mm-overview-icon" />
+              <span className="mm-name">全部模型</span>
+              <span className="muted">{models.length}</span>
+            </button>
+            <div className="mm-sep" />
             {providers.map((p) => (
               <button
                 key={p.id}
@@ -274,6 +287,8 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
             </div>
           </div>
 
+          {!draft && <Overview models={models} />}
+
           {draft && (
             <div className="mm-form">
               <div className="form-grid">
@@ -303,10 +318,14 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                 </div>
                 <label>参考图传法</label>
                 <div className="row">
-                  <select value={draft.refMode} onChange={(e) => set({ refMode: e.target.value as any })}>
-                    <option value="base64">直接塞进请求（base64）</option>
-                    <option value="public">给公网链接</option>
-                  </select>
+                  <Select
+                    value={draft.refMode}
+                    options={[
+                      { value: 'base64', label: '直接塞进请求（base64）' },
+                      { value: 'public', label: '给公网链接' },
+                    ]}
+                    onChange={(v) => set({ refMode: v })}
+                  />
                   {draft.refMode === 'public' && (
                     <input
                       value={draft.publicBaseUrl}
@@ -344,9 +363,18 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                     {pulling ? <Loader2 size={13} className="spin" /> : <CloudDownload size={13} />} 拉取模型列表
                   </button>
                 )}
-                <button className="ghost" onClick={addModel}>
-                  <Plus size={13} /> 手动添加
-                </button>
+                <span className="chip-wrap">
+                  <button className="ghost" onClick={() => setAddMenu(!addMenu)} title="先选这个模型是文本、图片还是视频，再填模型 ID">
+                    <Plus size={13} /> 手动添加 <ChevronDown size={13} />
+                  </button>
+                  <Popover open={addMenu} onClose={() => setAddMenu(false)} placement="bottom" className="right list-pop add-model-pop">
+                    {ADD_CAPS.map((c) => (
+                      <button key={c} className="list-item" onClick={() => addModel(c)}>
+                        {CAP_LABEL[c]}模型
+                      </button>
+                    ))}
+                  </Popover>
+                </span>
               </div>
               {pull && <PullPicker pull={pull} existing={draft.models.map((m) => m.remoteModel)} onChange={setPull} onAdd={addPicked} />}
               <table className="mm-table">
@@ -373,35 +401,26 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                           <input value={m.name} placeholder="界面上显示的名字" onChange={(e) => setModel(i, { name: e.target.value })} />
                         </td>
                         <td>
-                          <select
+                          <Select
                             value={m.capability}
-                            onChange={(e) => {
-                              const c = e.target.value as Capability;
+                            options={(Object.keys(CAP_LABEL) as Capability[]).map((k) => ({ value: k, label: CAP_LABEL[k] }))}
+                            onChange={(c) => {
                               // 中转站：类型变了，接口格式和参数预设一起换成这个类型的默认值
                               const relay = draft.type === 'relay' && c !== 'audio' ? RELAY_DEFAULTS[c] : undefined;
                               setModel(i, { capability: c, preset: relay?.preset || DEFAULT_PRESET[c], ...(relay ? { protocol: relay.protocol } : {}) });
                             }}
-                          >
-                            {Object.entries(CAP_LABEL).map(([k, v]) => (
-                              <option key={k} value={k}>
-                                {v}
-                              </option>
-                            ))}
-                          </select>
+                          />
                         </td>
                         <td>
                           <input value={m.remoteModel} placeholder="厂商那边的模型名" onChange={(e) => setModel(i, { remoteModel: e.target.value })} />
                         </td>
                         {draft.type === 'relay' && (
                           <td>
-                            <select value={m.protocol || ''} onChange={(e) => setModel(i, { protocol: e.target.value as RelayProtocol })}>
-                              <option value="">请选择</option>
-                              {PROTOCOLS.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                  {p.label}
-                                </option>
-                              ))}
-                            </select>
+                            <Select
+                              value={m.protocol || ''}
+                              options={PROTOCOLS.map((p) => ({ value: p.id, label: p.label }))}
+                              onChange={(v) => setModel(i, { protocol: v })}
+                            />
                             {m.protocol === 'custom' && (
                               <button className="link" onClick={() => setOpenTpl(openTpl === `${i}` ? null : `${i}`)}>
                                 编辑模板
@@ -410,13 +429,7 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                           </td>
                         )}
                         <td>
-                          <select value={m.preset} onChange={(e) => setModel(i, { preset: e.target.value })}>
-                            {presets.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.label}
-                              </option>
-                            ))}
-                          </select>
+                          <Select value={m.preset} options={presets.map((p) => ({ value: p.id, label: p.label }))} onChange={(v) => setModel(i, { preset: v })} />
                         </td>
                         <td className="price">
                           <input
@@ -429,14 +442,15 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                               setModel(i, { price: e.target.value === '' ? undefined : { unit: m.price?.unit || 'per_call', amount: Number(e.target.value) } })
                             }
                           />
-                          <select
+                          <Select
                             value={m.price?.unit || 'per_call'}
-                            onChange={(e) => setModel(i, { price: { amount: m.price?.amount ?? 0, unit: e.target.value as any } })}
-                          >
-                            <option value="per_call">/次</option>
-                            <option value="per_second">/秒</option>
-                            <option value="per_image">/张</option>
-                          </select>
+                            options={[
+                              { value: 'per_call', label: '/次' },
+                              { value: 'per_second', label: '/秒' },
+                              { value: 'per_image', label: '/张' },
+                            ]}
+                            onChange={(u) => setModel(i, { price: { amount: m.price?.amount ?? 0, unit: u } })}
+                          />
                         </td>
                         <td className="nowrap">
                           <button className="icon" title="试一下：文本模型发一句话；图片 / 视频模型只核对 ID，不扣费" onClick={() => testOne(i)} disabled={saving}>
@@ -489,26 +503,17 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
   );
 }
 
-const CAP_OF_GUESS = (g: RemoteModelGuess) => (g.supported ? CAP_LABEL[g.capability] : '用不上');
-const PROTOCOL_LABEL = (id?: RelayProtocol) => PROTOCOLS.find((p) => p.id === id)?.label || '';
+interface PullState {
+  items: RemoteModelGuess[];
+  picked: Set<string>;
+  q: string;
+  cap: AddCap | null;
+}
 
-/** 拉取到的模型列表：搜索、勾选、加入表格 */
-function PullPicker({
-  pull,
-  existing,
-  onChange,
-  onAdd,
-}: {
-  pull: { items: RemoteModelGuess[]; picked: Set<string>; q: string };
-  existing: string[];
-  onChange: (p: { items: RemoteModelGuess[]; picked: Set<string>; q: string } | null) => void;
-  onAdd: () => void;
-}) {
+/** 拉取到的模型列表：先选「添加为」什么类型，再搜索、勾选、加入表格 */
+function PullPicker({ pull, existing, onChange, onAdd }: { pull: PullState; existing: string[]; onChange: (p: PullState | null) => void; onAdd: () => void }) {
   const q = pull.q.trim().toLowerCase();
   const shown = pull.items.filter((g) => !q || g.remoteModel.toLowerCase().includes(q));
-  // 改类型：接口格式和参数预设换成这个类型的默认值
-  const setCap = (id: string, cap: (typeof RELAY_CAPS)[number]) =>
-    onChange({ ...pull, items: pull.items.map((g) => (g.remoteModel === id ? { ...g, capability: cap, ...RELAY_DEFAULTS[cap], note: undefined } : g)) });
   const toggle = (id: string) => {
     const picked = new Set(pull.picked);
     if (picked.has(id)) picked.delete(id);
@@ -518,14 +523,26 @@ function PullPicker({
   return (
     <div className="pull">
       <div className="pull-head">
-        <input autoFocus placeholder={`搜索 ${pull.items.length} 个模型，比如 deepseek、seedance、image`} value={pull.q} onChange={(e) => onChange({ ...pull, q: e.target.value })} />
-        <span className="muted">已选 {pull.picked.size} 个</span>
+        <span className="pull-as">添加为</span>
+        <div className="seg">
+          {ADD_CAPS.map((c) => (
+            <button key={c} className={pull.cap === c ? 'on' : ''} onClick={() => onChange({ ...pull, cap: c })}>
+              {CAP_LABEL[c]}
+            </button>
+          ))}
+        </div>
+        <input placeholder={`搜索 ${pull.items.length} 个模型`} value={pull.q} onChange={(e) => onChange({ ...pull, q: e.target.value })} />
         <span className="spacer" />
         <button className="ghost" onClick={() => onChange(null)}>
-          取消
+          关闭
         </button>
-        <button className="primary" disabled={!pull.picked.size} onClick={onAdd}>
-          加入选中的
+        <button
+          className="primary"
+          disabled={!pull.picked.size || !pull.cap}
+          title={!pull.cap ? '先在左边选这批模型是文本、图片还是视频' : undefined}
+          onClick={onAdd}
+        >
+          {pull.cap ? `加入 ${pull.picked.size} 个${CAP_LABEL[pull.cap]}模型` : '先选类型'}
         </button>
       </div>
       <div className="pull-list">
@@ -536,35 +553,37 @@ function PullPicker({
               <input type="checkbox" disabled={!g.supported || added} checked={pull.picked.has(g.remoteModel)} onChange={() => toggle(g.remoteModel)} />
               <span className="pull-id">{g.remoteModel}</span>
               <span className="spacer" />
-              {added ? (
-                <span className="muted">已添加</span>
-              ) : (
-                <>
-                  {g.note && g.supported && <span className="pull-note">{g.note}</span>}
-                  {g.supported ? (
-                    // 类型按名字猜的，猜错了直接在这里改
-                    <select
-                      className="pull-cap"
-                      value={g.capability}
-                      onChange={(e) => setCap(g.remoteModel, e.target.value as (typeof RELAY_CAPS)[number])}
-                    >
-                      {RELAY_CAPS.map((c) => (
-                        <option key={c} value={c}>
-                          {CAP_LABEL[c]}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span className="tag">{CAP_OF_GUESS(g)}</span>
-                  )}
-                  {g.supported && <span className="muted">{PROTOCOL_LABEL(g.protocol)}</span>}
-                </>
-              )}
+              {added ? <span className="muted">已添加</span> : !g.supported && <span className="muted">向量 / 语音类，用不上</span>}
             </label>
           );
         })}
         {shown.length === 0 && <div className="muted pad">没有匹配的模型</div>}
       </div>
+    </div>
+  );
+}
+
+/** 总览：已经能用的模型（服务商启用、填了 key、模型启用），按类型分组，只列名字 */
+function Overview({ models }: { models: { id: string; name: string; capability: Capability }[] }) {
+  const groups = (['text', 'image', 'video', 'audio'] as Capability[]).map((c) => ({ c, list: models.filter((m) => m.capability === c) })).filter((g) => g.list.length);
+  return (
+    <div className="mm-form mm-overview">
+      <div className="muted">这里列出现在能用的模型（服务商已启用、填了 key、模型已启用）。要修改，点左边对应的服务商。</div>
+      {groups.length === 0 && <div className="muted pad">还没有能用的模型：点左下角添加一个服务商</div>}
+      {groups.map((g) => (
+        <div key={g.c} className="ov-group">
+          <div className="ov-title">
+            {CAP_LABEL[g.c]}模型 <span className="muted">{g.list.length}</span>
+          </div>
+          <div className="ov-names">
+            {g.list.map((m) => (
+              <span key={m.id} className="ov-name">
+                {m.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -611,11 +630,15 @@ function TemplateEditor({ value, onChange }: { value?: CustomTemplate; onChange:
         {f('resultUrlPath', '结果链接字段', 'video_url')}
         {f('errorPath', '错误信息字段', 'error.message')}
         <label>结果类型</label>
-        <select value={v.resultKind} onChange={(e) => onChange({ ...v, resultKind: e.target.value as any })}>
-          <option value="video">视频</option>
-          <option value="image">图片</option>
-          <option value="audio">音频</option>
-        </select>
+        <Select
+          value={v.resultKind}
+          options={[
+            { value: 'video', label: '视频' },
+            { value: 'image', label: '图片' },
+            { value: 'audio', label: '音频' },
+          ]}
+          onChange={(k) => onChange({ ...v, resultKind: k })}
+        />
       </div>
     </div>
   );

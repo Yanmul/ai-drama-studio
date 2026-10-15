@@ -9,6 +9,8 @@ import { AppContext, type AppCtx } from './context';
 import { CharacterLibrary, HistoryPicker, ProjectSettings } from './components/Modals';
 import { ModelManager } from './components/ModelManager';
 import { QueuePanel } from './components/QueuePanel';
+import { DialogHost, promptDialog } from './components/Dialog';
+import { Select } from './components/Select';
 
 interface Toast {
   id: number;
@@ -202,37 +204,39 @@ export function App() {
                   </span>
                 )}
                 <span className="slash">/</span>
-                <select
+                <Select
                   className="ep-select"
                   value={episode?.id || ''}
-                  onChange={async (e) => {
+                  options={[...episodes.map((ep) => ({ value: ep.id, label: ep.title })), { value: '__new', label: '+ 新建一集' }]}
+                  onChange={async (v) => {
                     if (!project) return;
-                    if (e.target.value === '__new') {
-                      const ep = await api.createEpisode(project.id);
-                      setEpisodes((es) => [...es, ep]);
-                      go(project.id, ep.id);
+                    if (v === '__new') {
+                      try {
+                        const ep = await api.createEpisode(project.id);
+                        setEpisodes((es) => [...es, ep]);
+                        go(project.id, ep.id);
+                      } catch (e: any) {
+                        toast(e.message, 'error');
+                      }
                       return;
                     }
-                    go(project.id, e.target.value);
+                    go(project.id, v);
                   }}
-                >
-                  {episodes.map((ep) => (
-                    <option key={ep.id} value={ep.id}>
-                      {ep.title}
-                    </option>
-                  ))}
-                  <option value="__new">+ 新建一集</option>
-                </select>
+                />
                 {episode && project && (
                   <button
                     className="ghost small"
                     title="给这一集改名"
                     onClick={async () => {
-                      const t = prompt('这一集的标题', episode.title);
-                      if (!t) return;
-                      const ep = await api.renameEpisode(project.id, episode.id, t);
-                      setEpisodes((es) => es.map((x) => (x.id === ep.id ? ep : x)));
-                      setEpisode(ep);
+                      const t = await promptDialog({ title: '给这一集改名', defaultValue: episode.title, placeholder: '比如：第2集 放学路上' });
+                      if (!t || t === episode.title) return;
+                      try {
+                        const ep = await api.renameEpisode(project.id, episode.id, t);
+                        setEpisodes((es) => es.map((x) => (x.id === ep.id ? ep : x)));
+                        setEpisode(ep);
+                      } catch (e: any) {
+                        toast(e.message, 'error');
+                      }
                     }}
                   >
                     改名
@@ -282,6 +286,8 @@ export function App() {
               }}
             />
           )}
+
+          <DialogHost />
 
           <div className="toasts">
             {toasts.map((t) => (

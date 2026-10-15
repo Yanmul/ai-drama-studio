@@ -1,6 +1,8 @@
 // 角色库、生成历史、项目设置三个弹窗
 import { useEffect, useRef, useState } from 'react';
 import { Plus, Trash2, X } from 'lucide-react';
+import { confirmDialog } from './Dialog';
+import { Select } from './Select';
 import type { Asset, Character, Project } from '../../shared/types';
 import { api, fileUrl } from '../api';
 import { useApp } from '../context';
@@ -82,7 +84,7 @@ export function CharacterLibrary({ onClose }: { onClose: () => void }) {
                 <button
                   className="danger"
                   onClick={async () => {
-                    if (!confirm(`删除角色「${sel.name}」？`)) return;
+                    if (!(await confirmDialog({ title: `删除角色「${sel.name}」？`, okText: '删除', danger: true }))) return;
                     await api.deleteCharacter(project.id, sel.id!);
                     setSel(null);
                     refreshCharacters();
@@ -180,11 +182,7 @@ export function ProjectSettings({ project, onSaved, onClose }: { project: Projec
             onChange={(e) => setP({ ...p, style: e.target.value })}
           />
           <label>默认比例</label>
-          <select value={p.ratio} onChange={(e) => setP({ ...p, ratio: e.target.value })}>
-            {['9:16', '16:9', '1:1', '4:3', '3:4'].map((r) => (
-              <option key={r}>{r}</option>
-            ))}
-          </select>
+          <Select value={p.ratio} options={['9:16', '16:9', '1:1', '4:3', '3:4'].map((r) => ({ value: r, label: r }))} onChange={(r) => setP({ ...p, ratio: r })} />
         </div>
         <div className="mm-actions">
           <span className="spacer" />
@@ -252,7 +250,8 @@ export function AssetLibrary({ onPick, onClose }: { onPick: (a: Asset) => void; 
               className="asset-del"
               title="从资产库删除"
               onClick={async () => {
-                if (!confirm(`从资产库删除「${a.name}」？画布上已经用到的不受影响。`)) return;
+                const ok = await confirmDialog({ title: `从资产库删除「${a.name}」？`, message: '画布上已经用到的不受影响。', okText: '删除', danger: true });
+                if (!ok) return;
                 await api.deleteAsset(a.id);
                 load();
               }}

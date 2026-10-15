@@ -109,7 +109,7 @@ export async function listModels(): Promise<ModelInfo[]> {
   for (const p of f.providers) {
     if (!isReady(p)) continue;
     for (const m of p.models) {
-      if (!m.enabled) continue;
+      if (!m.enabled || !m.remoteModel) continue; // 没填模型 ID 的用不了，不列出来
       const preset = getPreset(m.preset);
       out.push({
         id: `${p.id}/${m.id}`,

@@ -179,6 +179,140 @@ textarea {
 .danger:hover {
   background: rgba(248, 113, 113, 0.1);
 }
+/* —— 下拉框（替代浏览器自带的 select） —— */
+.select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--line-2);
+  background: var(--surface-2);
+  color: var(--text);
+  text-align: left;
+}
+.select:hover:not(:disabled) {
+  border-color: var(--line-3);
+}
+.select:focus-visible,
+.select.open {
+  outline: none;
+  border-color: rgba(122, 167, 255, 0.6);
+  box-shadow: 0 0 0 3px rgba(122, 167, 255, 0.15);
+}
+.select-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.select-arrow {
+  flex-shrink: 0;
+  color: var(--text-3);
+  transition: transform 0.15s;
+}
+.select.open .select-arrow {
+  transform: rotate(180deg);
+}
+.select-menu {
+  position: fixed;
+  z-index: 300;
+  max-height: 320px;
+  overflow: auto;
+  padding: 5px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  animation: rise 0.12s ease both;
+}
+.select-opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px 6px 6px;
+  border-radius: 8px;
+  text-align: left;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+.select-opt.active:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.select-opt.on {
+  color: var(--text);
+}
+.select-check {
+  width: 16px;
+  flex-shrink: 0;
+  display: inline-flex;
+  color: var(--accent);
+}
+.select-label {
+  flex: 1;
+}
+.select-hint {
+  margin-left: 14px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+/* —— 确认框 / 输入框（替代浏览器自带的 confirm / prompt） —— */
+.dialog-mask {
+  z-index: 200;
+}
+.dialog {
+  width: 400px;
+  max-width: calc(100vw - 32px);
+  padding: 20px 20px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: 18px;
+  box-shadow: var(--shadow-lg);
+  animation: rise 0.16s ease both;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dialog-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.dialog-warn {
+  color: var(--bad);
+}
+.dialog-msg {
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-line;
+}
+.dialog-input {
+  width: 100%;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.danger.solid {
+  background: var(--bad);
+  color: #1a0505;
+  font-weight: 600;
+  padding: 7px 18px;
+  border-radius: 10px;
+}
+.danger.solid:hover {
+  background: #fb8a8a;
+}
+
 .link {
   color: var(--accent);
   padding: 0 4px;
@@ -492,14 +626,16 @@ textarea {
 .slash {
   color: var(--text-3);
 }
-.ep-select {
+.select.ep-select {
   background: transparent;
   border-color: transparent;
   color: var(--text-2);
   max-width: 240px;
 }
-.ep-select:hover {
+.select.ep-select:hover,
+.select.ep-select.open {
   background: var(--surface-2);
+  box-shadow: none;
 }
 
 /* ===========================================================
@@ -1695,11 +1831,6 @@ input.short {
   background: var(--surface-4);
   color: var(--text-2);
 }
-.pull-item .pull-cap {
-  font-size: 11.5px;
-  padding: 2px 6px;
-  border-radius: 6px;
-}
 .pull-item .muted {
   font-size: 11.5px;
   min-width: 140px;
@@ -1731,17 +1862,87 @@ input.short {
   vertical-align: middle;
 }
 .mm-table input:not([type='checkbox']),
-.mm-table select {
+.mm-table .select {
   width: 100%;
   padding: 5px 7px;
   font-size: 12.5px;
 }
-.mm-table select {
+.mm-table .select {
   min-width: 70px;
+}
+/* 显示名、模型 ID 要能看全；类型、接口格式、预设下拉框按内容收窄 */
+.mm-table td:nth-child(2) input,
+.mm-table td:nth-child(4) input {
+  min-width: 130px;
+}
+.mm-table td:nth-child(3) .select {
+  width: 72px;
+}
+.mm-table .select-value {
+  max-width: 108px;
 }
 .mm-table td.price {
   display: flex;
   gap: 4px;
+}
+.mm-table td.price .select {
+  width: 64px;
+  min-width: 64px;
+}
+.form-grid > .select,
+.form-grid .row > .select {
+  justify-self: start;
+  min-width: 200px;
+}
+
+/* 模型管理：总览、分隔线、「添加为」 */
+.mm-sep {
+  height: 1px;
+  margin: 6px 8px;
+  background: var(--line);
+}
+.mm-overview-icon {
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+.mm-overview {
+  gap: 18px;
+}
+.ov-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ov-title {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+.ov-title .muted {
+  font-weight: 400;
+  margin-left: 4px;
+}
+.ov-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ov-name {
+  padding: 6px 12px;
+  border-radius: 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.pull-as {
+  font-size: 12.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.pull-head .seg {
+  flex-wrap: nowrap;
+}
+.add-model-pop {
+  min-width: 140px;
 }
 .mm-table td.price input {
   width: 64px;
