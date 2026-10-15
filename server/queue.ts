@@ -390,16 +390,12 @@ export async function recover() {
     jobs.set(j.id, j);
     if (j.status === 'queued') continue;
     if (j.status === 'running' && j.remoteId) {
-      contextFor(j)
-        .then((ctx) => {
-          const cur = running.get(ctx.provider.id) || 0;
-          running.set(ctx.provider.id, cur + 1);
-          return pollLoop(j, ctx).finally(() => {
-            running.set(ctx.provider.id, Math.max(0, (running.get(ctx.provider.id) || 1) - 1));
-            pump();
-          });
-        })
-        .catch((e) => fail(j, e));
+      // 先把接着查询的任务计入并发名额，再 pump 排队的，免得重启后一下子超出并发上限
+      try {
+        trackPoll(j, await contextFor(j));
+      } catch (e) {
+        await fail(j, e, true);
+      }
     } else if (j.status === 'running') {
       await fail(j, new Error('服务重启时这个任务还没提交成功，请重新生成'));
     }
