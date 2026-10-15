@@ -31,8 +31,13 @@ export function QueuePanel({ onClose }: { onClose: () => void }) {
   const spent = jobs.filter((j) => j.status === 'succeeded' && j.cost).reduce((s, j) => s + (j.cost || 0), 0);
 
   const locate = (j: Job) => {
+    // 在首页：直接打开那张画布，加载完自动定位
+    if (!episode) {
+      sessionStorage.setItem('focusNode', `${j.request.episodeId}/${j.request.nodeId}`);
+      return void (location.hash = `#/c/${encodeURIComponent(j.request.projectId)}/${encodeURIComponent(j.request.episodeId)}`);
+    }
     // 在别的剧集：直接切过去，加载完自动定位
-    if (j.request.episodeId !== episode?.id) return openEpisode(j.request.episodeId, j.request.nodeId);
+    if (j.request.episodeId !== episode.id) return openEpisode(j.request.episodeId, j.request.nodeId);
     const n = rf.getNode(j.request.nodeId);
     if (!n) return toast('对应的节点已经删掉了');
     rf.setNodes((ns) => ns.map((x) => ({ ...x, selected: x.id === n.id })));

@@ -95,11 +95,18 @@ export const api = {
 
   previewPrompt: (req: GenerateRequest) => call<{ prompt: string }>('POST', '/api/preview-prompt', req),
   generate: (req: GenerateRequest) => call<Job[]>('POST', '/api/generate', req),
+  allJobs: () => call<Job[]>('GET', '/api/jobs?limit=300'),
+  settings: () => call<{ favoriteModels?: string[] }>('GET', '/api/settings'),
+  saveSettings: (patch: { favoriteModels?: string[] }) => call<{ favoriteModels?: string[] }>('PUT', '/api/settings', patch),
   jobs: (pid: string) => call<Job[]>('GET', `/api/jobs?projectId=${encodeURIComponent(pid)}`),
   cancelJob: (id: string) => call<Job>('POST', `/api/jobs/${id}/cancel`),
   resumeJob: (id: string) => call<Job>('POST', `/api/jobs/${id}/resume`),
   retryJob: (id: string) => call<Job[]>('POST', `/api/jobs/${id}/retry`),
   quickText: (modelId: string, prompt: string) => call<{ text: string }>('POST', '/api/quick-text', { modelId, prompt }),
+
+  /** 用 ffmpeg 截帧；没装 ffmpeg 时会抛错（前端改在浏览器里截） */
+  frame: (pid: string, file: string, at: 'first' | 'last' | number) =>
+    call<{ file: string; kind: 'image' }>('POST', `/api/projects/${pid}/frame`, { file, at }),
 
   async upload(pid: string, file: File): Promise<{ file: string; kind: 'image' | 'video' | 'audio'; name: string }> {
     const form = new FormData();

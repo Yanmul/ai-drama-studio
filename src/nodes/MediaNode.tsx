@@ -1,8 +1,8 @@
 // 画布上的节点：文本 / 图片 / 视频 / 音频 / 脚本 共用一个组件（参考 LibTV 的样子）。
 // 选中节点时，下方弹出生成面板（GeneratePanel）。
 import { Handle, NodeToolbar, Position, useReactFlow, type Node, type NodeProps } from '@xyflow/react';
-import { memo, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ChevronLeft, ChevronRight, Download, FileText, Image as ImageIcon, Loader2, Maximize2, Music, Play, ScrollText, Star, Upload, UserRound, Wand2, X } from 'lucide-react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, Camera, ChevronLeft, ChevronRight, Download, FileText, Image as ImageIcon, Loader2, Maximize2, Music, Play, ScrollText, Star, Upload, UserRound, Wand2, X } from 'lucide-react';
 import type { NodeData, Version } from '../../shared/types';
 import { api, fileUrl } from '../api';
 import { useApp, useCanvas, useNodeJobs } from '../context';
@@ -20,15 +20,60 @@ const ICON = {
   script: ScrollText,
 };
 
+/** 00:03.048 */
+function fmtStamp(t: number) {
+  const m = Math.floor(t / 60);
+  const s = t - m * 60;
+  return `${String(m).padStart(2, '0')}:${s.toFixed(3).padStart(6, '0')}`;
+}
+
+/** 在浏览器里截一帧：把视频画面画到画布上，导出 PNG（原始分辨率） */
+function drawFrame(v: HTMLVideoElement): Promise<Blob> {
+  const c = document.createElement('canvas');
+  c.width = v.videoWidth;
+  c.height = v.videoHeight;
+  c.getContext('2d')!.drawImage(v, 0, 0, c.width, c.height);
+  return new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error('截图失败'))), 'image/png'));
+}
+
+/** 另开一个看不见的播放器，跳到指定时间再截（不打扰正在看的视频） */
+function grabAt(src: string, at: 'first' | 'last'): Promise<{ blob: Blob; t: number }> {
+  return new Promise((resolve, reject) => {
+    const v = document.createElement('video');
+    v.muted = true;
+    v.preload = 'auto';
+    v.src = src;
+    v.onerror = () => reject(new Error('视频读不出来'));
+    v.onloadedmetadata = () => {
+      // 尾帧：跳到结尾前一点点；正好跳到结尾，有的视频会是黑屏
+      v.currentTime = at === 'first' ? 0 : Math.max(0, v.duration - 0.04);
+    };
+    v.onseeked = () => drawFrame(v).then((blob) => resolve({ blob, t: v.currentTime }), reject);
+  });
+}
+
 function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
-  const { updateNodeData, getNode } = useReactFlow();
+  const { updateNodeData, getNode, getNodes } = useReactFlow();
   const { project, episode, toast, keepDays } = useApp();
-  const { expandScript } = useCanvas();
+  const { expandScript, addNode } = useCanvas();
   const [editingTitle, setEditingTitle] = useState(false);
   const [dims, setDims] = useState('');
   const [verPop, setVerPop] = useState(false);
   const [zoom, setZoom] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [frameMenu, setFrameMenu] = useState(false);
+  const [grabbing, setGrabbing] = useState(false);
+  useEffect(() => {
+    if (!frameMenu) return;
+    // 捕获阶段：点在画布上（React Flow 会拦住事件往外传）也能关；点截帧按钮 / 菜单本身不关
+    const close = (e: MouseEvent) => {
+      if ((e.target as Element).closest?.('.frame-tool')) return;
+      setFrameMenu(false);
+    };
+    window.addEventListener('mousedown', close, true);
+    return () => window.removeEventListener('mousedown', close, true);
+  }, [frameMenu]);
   const Icon = ICON[data.kind];
   const v = shownVersion(data);
 
@@ -58,6 +103,56 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
       updateNodeData(id, { versions: [...data.versions, ver], current: data.versions.length });
     } catch (e: any) {
       toast(e.message, 'error');
+    }
+  };
+
+  /** 截帧 → 右边新建一个图片节点，并连上线 */
+  const capture = async (at: 'current' | 'first' | 'last') => {
+    setFrameMenu(false);
+    const vid = videoRef.current;
+    if (!project || !v?.file || !vid) return;
+    setGrabbing(true);
+    try {
+      let file: string | undefined;
+      let t = at === 'first' ? 0 : at === 'last' ? vid.duration : vid.currentTime;
+      // 首帧 / 尾帧先让后端用 ffmpeg 截（最准）；当前帧直接截看到的画面
+      // （浏览器读不了这个视频的编码时，当前帧也交给 ffmpeg）
+      const browserOk = vid.readyState >= 2 && vid.videoWidth > 0;
+      if (at !== 'current' || !browserOk) {
+        try {
+          file = (await api.frame(project.id, v.file, at === 'current' ? vid.currentTime || 0 : at)).file;
+        } catch {}
+      }
+      if (!file && !browserOk && at === 'current') throw new Error('浏览器读不了这个视频，电脑上也没有 ffmpeg，截不了当前帧');
+      if (!file) {
+        let blob: Blob;
+        if (at === 'current') blob = await drawFrame(vid);
+        else ({ blob, t } = await grabAt(fileUrl(v.file), at));
+        const up = await api.upload(project.id, new File([blob], `frame-${Date.now()}.png`, { type: 'image/png' }));
+        file = up.file;
+      }
+      // 放在视频右边；那里已经有节点（比如之前截的）就往下排
+      const me = getNode(id);
+      const pos = me ? { x: me.position.x + (me.measured?.width ?? 340) + 90, y: me.position.y } : { x: 0, y: 0 };
+      const others = getNodes().filter((n) => n.id !== id);
+      const H = (me?.measured?.height ?? 260) + 40;
+      for (let i = 0; i < 50; i++) {
+        const hit = others.some(
+          (n) =>
+            Math.abs(n.position.x - pos.x) < (n.measured?.width ?? 340) &&
+            n.position.y < pos.y + H - 40 &&
+            n.position.y + (n.measured?.height ?? 260) > pos.y,
+        );
+        if (!hit) break;
+        pos.y += H;
+      }
+      const label = at === 'first' ? '首帧' : at === 'last' ? '尾帧' : '截图';
+      addNode('image', pos, { title: Number.isFinite(t) ? `${label} ${fmtStamp(t)}` : label, version: { kind: 'image', file, label }, connectFrom: id });
+      toast(`已截取${label === '截图' ? '当前帧' : label}`);
+    } catch (e: any) {
+      toast(e.message || '截图失败', 'error');
+    } finally {
+      setGrabbing(false);
     }
   };
 
@@ -162,9 +257,24 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
             )}
             {fileKind(v.file) === 'video' && (
               <HoverVideo
+                videoRef={videoRef}
                 src={fileUrl(v.file)}
                 onLoadedMetadata={(e) => setDims(`${e.currentTarget.videoWidth} × ${e.currentTarget.videoHeight} · ${Math.round(e.currentTarget.duration)}s`)}
               />
+            )}
+            {fileKind(v.file) === 'video' && (
+              <div className={`frame-tool nodrag ${frameMenu ? 'open' : ''}`} onMouseDown={(e) => e.stopPropagation()}>
+                <button className="frame-btn" title="截帧" disabled={grabbing} onClick={() => setFrameMenu(!frameMenu)}>
+                  {grabbing ? <Loader2 size={15} className="spin" /> : <Camera size={15} />}
+                </button>
+                {frameMenu && (
+                  <div className="frame-menu">
+                    <button onClick={() => capture('current')}>截取当前帧</button>
+                    <button onClick={() => capture('first')}>截取首帧</button>
+                    <button onClick={() => capture('last')}>截取尾帧</button>
+                  </div>
+                )}
+              </div>
             )}
             {fileKind(v.file) === 'audio' && <audio className="nodrag" src={fileUrl(v.file)} controls />}
           </div>
@@ -314,13 +424,25 @@ export const MediaNode = memo(MediaNodeImpl);
  * 视频：鼠标移上去就静音预览，移开就暂停；点三角照常播放。
  * 预览时点了小喇叭（开声音）或者自己点了播放 / 暂停，就算「正式在看」，移开鼠标不再自动暂停。
  */
-function HoverVideo({ src, onLoadedMetadata }: { src: string; onLoadedMetadata: React.ReactEventHandler<HTMLVideoElement> }) {
+function HoverVideo({
+  src,
+  onLoadedMetadata,
+  videoRef,
+}: {
+  src: string;
+  onLoadedMetadata: React.ReactEventHandler<HTMLVideoElement>;
+  /** 截帧要读当前播放到哪：把内部的 video 元素交给外面 */
+  videoRef?: React.RefObject<HTMLVideoElement | null>;
+}) {
   const ref = useRef<HTMLVideoElement>(null);
   const previewing = useRef(false);
   const starting = useRef(false); // 我们自己调 play() 引起的 play 事件，不算用户操作
   return (
     <video
-      ref={ref}
+      ref={(el) => {
+        ref.current = el;
+        if (videoRef) videoRef.current = el;
+      }}
       className="nodrag"
       src={src}
       controls

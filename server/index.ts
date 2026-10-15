@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 // 本地后端：只监听本机 127.0.0.1，局域网里的其他设备访问不到。
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
@@ -30,7 +31,7 @@ import { buildPrompt } from './prompt.js';
 import { cleanupStatus, runCleanup, startCleanupSchedule } from './cleanup.js';
 import { cancelJob, enqueue, events, getJob, listJobs, recover, resumeJob, runQuickText } from './queue.js';
 import { addAssets, deleteAsset, listAssets, renameAsset, type AssetInput } from './assets.js';
-import { PROJECT_ROOT, WORKSPACE, absFromRel, ensureDir, kindOfFile, newId, paths, rel } from './storage.js';
+import { PROJECT_ROOT, WORKSPACE, absFromRel, ensureDir, kindOfFile, newId, paths, readJson, rel, writeJson } from './storage.js';
 
 const PORT = Number(process.env.PORT || 6688);
 const app = Fastify({ logger: false, bodyLimit: 50 * 1024 * 1024 });
@@ -183,6 +184,44 @@ app.post('/api/projects/:pid/upload', async (req) => {
     throw e;
   }
   return { file: rel(file), kind, name: part.filename };
+});
+
+// —— 视频截帧（首帧 / 尾帧 / 指定时间）：用 ffmpeg 从原文件取，分辨率和原视频一样 ——
+// 电脑上没装 ffmpeg 时返回 501，前端改在浏览器里截
+app.post('/api/projects/:pid/frame', async (req, reply) => {
+  const { pid } = req.params as any;
+  const { file, at } = (req.body || {}) as { file: string; at: 'first' | 'last' | number };
+  const src = absFromRel(file);
+  const dir = paths.uploads(pid);
+  await ensureDir(dir);
+  const out = path.join(dir, `${newId('frame_')}.png`);
+  const args =
+    at === 'last'
+      ? ['-y', '-sseof', '-0.6', '-i', src, '-update', '1', '-vsync', '0', out] // 读最后 0.6 秒，一帧帧覆盖，留下的就是最后一帧
+      : at === 'first'
+        ? ['-y', '-i', src, '-frames:v', '1', out]
+        : ['-y', '-ss', String(Math.max(0, Number(at) || 0)), '-i', src, '-frames:v', '1', out];
+  const ok = await new Promise<boolean>((resolve) => {
+    try {
+      const p = spawn('ffmpeg', args, { stdio: 'ignore' });
+      p.on('error', () => resolve(false));
+      p.on('exit', (code) => resolve(code === 0));
+    } catch {
+      resolve(false);
+    }
+  });
+  if (!ok || !fs.existsSync(out)) return reply.status(501).send({ error: '没有 ffmpeg' });
+  return { file: rel(out), kind: 'image' };
+});
+
+// —— 全局设置（常用模型等） ——
+app.get('/api/settings', async () => readJson<Record<string, unknown>>(paths.settings(), {}));
+app.put('/api/settings', async (req) => {
+  const cur = await readJson<Record<string, unknown>>(paths.settings(), {});
+  const next = { ...cur, ...((req.body as object) || {}) };
+  await ensureDir(paths.config());
+  await writeJson(paths.settings(), next);
+  return next;
 });
 
 // —— 资产库 ——

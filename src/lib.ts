@@ -43,9 +43,9 @@ export function pickModel(models: ModelInfo[], cap: Capability, preferred?: stri
   return list.find((m) => m.id === preferred) || list[0];
 }
 
-export function emptyGen(models: ModelInfo[], kind: NodeKind, projectRatio?: string): GenState {
+export function emptyGen(models: ModelInfo[], kind: NodeKind, projectRatio?: string, preferredModel?: string): GenState {
   const cap = KIND_CAP[kind];
-  const m = cap ? pickModel(models, cap) : undefined;
+  const m = cap ? pickModel(models, cap, preferredModel) : undefined;
   const params = defaultParams(m);
   if (projectRatio && m?.params.some((p) => p.key === 'ratio' && p.options?.includes(projectRatio))) params.ratio = projectRatio;
   const mode = kind === 'video' ? (m?.modes.find((x) => x.id === 'omni') || m?.modes[0])?.id : m?.modes[0]?.id;

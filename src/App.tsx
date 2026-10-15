@@ -4,7 +4,7 @@ import { ChevronLeft, Clapperboard, ListChecks, Plus, Settings, SlidersHorizonta
 import type { Character, Episode, Job, ModelInfo, Project, ServerEvent } from '../shared/types';
 import { api } from './api';
 import { Canvas } from './Canvas';
-import { Home } from './Home';
+import { Home, type HomeView } from './Home';
 import { AppContext, JobsContext, jobStore, type AppCtx } from './context';
 import { CharacterLibrary, HistoryPicker, ProjectSettings } from './components/Modals';
 import { ModelManager } from './components/ModelManager';
@@ -19,10 +19,12 @@ interface Toast {
   action?: { label: string; onClick: () => void };
 }
 
-/** 地址：#/ 主页；#/c/<项目>/<集> 画布 */
-function parseHash(): { pid?: string; eid?: string } {
+/** 地址：#/ 首页；#/projects 项目；#/assets 资产；#/c/<项目>/<集> 画布 */
+function parseHash(): { pid?: string; eid?: string; view: HomeView } {
   const m = location.hash.match(/^#\/c\/([^/]+)(?:\/([^/]+))?/);
-  return m ? { pid: decodeURIComponent(m[1]), eid: m[2] ? decodeURIComponent(m[2]) : undefined } : {};
+  if (m) return { pid: decodeURIComponent(m[1]), eid: m[2] ? decodeURIComponent(m[2]) : undefined, view: 'home' };
+  const v = location.hash.match(/^#\/(projects|assets)/)?.[1] as HomeView | undefined;
+  return { view: v || 'home' };
 }
 
 export function App() {
@@ -77,6 +79,7 @@ export function App() {
   useEffect(() => {
     refreshModels();
     api.cleanupStatus().then((s) => setKeepDays(s.keepDays)).catch(() => undefined);
+    api.allJobs().then(setJobs).catch(() => {});
     const h = () => setRoute(parseHash());
     window.addEventListener('hashchange', h);
     return () => window.removeEventListener('hashchange', h);
@@ -87,7 +90,6 @@ export function App() {
     if (!route.pid) {
       setProject(undefined);
       setEpisode(undefined);
-      setShowQueue(false);
       return;
     }
     let alive = true;
@@ -105,7 +107,10 @@ export function App() {
         setEpisodes(es);
         setEpisode(es.find((e) => e.id === route.eid) || es[0]);
         api.characters(p.id).then(setCharacters).catch((e) => toast(`读取角色库失败：${e.message}`, 'error'));
-        api.jobs(p.id).then(setJobs).catch((e) => toast(`读取生成记录失败：${e.message}`, 'error'));
+        api
+          .jobs(p.id)
+          .then((pj) => setJobs((prev) => [...pj, ...prev.filter((x) => !pj.some((y) => y.id === x.id))]))
+          .catch((e) => toast(`读取生成记录失败：${e.message}`, 'error'));
       } catch (e: any) {
         toast(e.message, 'error');
       }
@@ -212,10 +217,23 @@ export function App() {
 
   return (
     <AppContext.Provider value={ctx}>
-      <JobsContext.Provider value={projectJobs}>
+      {/* 首页的队列看全部项目的任务；进了画布只看这个项目的 */}
+      <JobsContext.Provider value={project ? projectJobs : jobs}>
       <ReactFlowProvider>
         <div className="app">
-          {!inCanvas && <Home onOpen={(pid, eid) => go(pid, eid)} onOpenModels={() => setModal('models')} toast={toast} />}
+          {!inCanvas && (
+            <div className="home-wrap">
+              <Home
+                view={route.view}
+                onNav={(v) => (location.hash = v === 'home' ? '#/' : `#/${v}`)}
+                onOpen={(pid, eid) => go(pid, eid)}
+                onOpenModels={() => setModal('models')}
+                onToggleQueue={() => setShowQueue(!showQueue)}
+                queueOpen={showQueue}
+              />
+              {showQueue && <QueuePanel onClose={() => setShowQueue(false)} />}
+            </div>
+          )}
 
           {inCanvas && (
             <>

@@ -25,7 +25,7 @@ import { AddNodeMenu, type AddMenuAction } from './components/AddNodeMenu';
 import { CanvasContext, useApp, useJobs, type CanvasCtx } from './context';
 import { buildRequest, estimateCostNumber } from './inputs';
 import { pruneDeletedVersions } from '../shared/cleanup';
-import { KIND_CAP, KIND_LABEL, makeNodeData, newId, pickModel } from './lib';
+import { KIND_CAP, KIND_LABEL, emptyGen, makeNodeData, newId, pickModel } from './lib';
 import { MediaNode } from './nodes/MediaNode';
 import { FlowEdge } from './edges/FlowEdge';
 import { SelectionBar } from './components/SelectionBar';
@@ -275,6 +275,27 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       alive = false;
     };
   }, [project.id, episode.id, reloadTick]);
+
+  // —— 从首页快捷入口进来：放好一个节点（模型选好），打开生成框 ——
+  useEffect(() => {
+    if (!loaded) return;
+    let p: { pid: string; kind: NodeKind; modelId?: string } | null = null;
+    try {
+      p = JSON.parse(sessionStorage.getItem('pendingNode') || 'null');
+    } catch {}
+    if (!p || p.pid !== project.id) return;
+    sessionStorage.removeItem('pendingNode');
+    const id = addNode(p.kind, { x: 0, y: 0 });
+    if (p.modelId) rf.updateNodeData(id, { gen: emptyGen(models, p.kind, project.ratio, p.modelId) });
+    setTimeout(() => {
+      rf.setNodes((ns) => ns.map((n) => ({ ...n, selected: n.id === id })));
+      const n = rf.getNode(id);
+      const w = n?.measured?.width ?? 340;
+      const h = n?.measured?.height ?? 260;
+      // 生成框在节点下面，镜头往下偏一点，让节点和生成框都在画面里
+      rf.setCenter(w / 2, h / 2 + 150, { zoom: 1, duration: 0 });
+    }, 80);
+  }, [loaded]);
 
   // —— 新结果进来，放进节点 ——
   useEffect(() => {
