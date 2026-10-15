@@ -3444,3 +3444,330 @@ input.short {
 .frame-menu button:hover {
   background: rgba(255, 255, 255, 0.1);
 }
+
+/* ===========================================================
+   模型管理弹框（固定大小：切换服务商时不跳；底部操作栏固定）
+   =========================================================== */
+.modal.mm-modal {
+  width: 1100px;
+  height: min(760px, calc(100vh - 60px));
+}
+.mm-modal .mm {
+  min-height: 0;
+}
+/* —— 左边列表 —— */
+.mm-modal .mm-list {
+  width: 252px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px;
+}
+.mm-modal .mm-item {
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+}
+.mm-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+.mm-sub {
+  font-size: 11.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.mm-st.ok {
+  color: var(--good);
+}
+.mm-st.bad {
+  color: var(--bad);
+}
+.mm-st.warn {
+  color: var(--warn);
+}
+.dot.bad {
+  background: var(--bad);
+  box-shadow: 0 0 8px rgba(248, 113, 113, 0.5);
+}
+.dot.warn {
+  background: var(--warn);
+}
+.mm-group-label {
+  font-size: 11.5px;
+  color: var(--text-3);
+  padding: 12px 10px 4px;
+}
+.mm-add-box {
+  border-top: 1px solid var(--line);
+  margin: 6px -10px -10px;
+  padding: 0 10px 12px;
+}
+.mm-add-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.mm-add-grid.quick {
+  grid-template-columns: 1fr 1fr 1fr;
+  margin-top: 6px;
+}
+.mm-add-grid {
+  gap: 6px;
+  padding: 2px 0 0;
+}
+.mm-add-grid button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 7px 6px;
+  border-radius: 9px;
+  border: 1px dashed var(--line-3);
+  color: var(--text-2);
+}
+.mm-add-grid button:hover {
+  color: var(--text);
+  background: var(--surface-3);
+  border-style: solid;
+}
+/* —— 右边 —— */
+.mm-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mm-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px 10px;
+}
+.mm-title-input {
+  font-size: 16px;
+  font-weight: 600;
+  background: transparent !important;
+  border-color: transparent !important;
+  padding: 5px 8px !important;
+  margin-left: -8px;
+  /* 宽度跟着名字走，「中转站」标签紧跟在后面 */
+  field-sizing: content;
+  min-width: 80px;
+  max-width: 420px;
+}
+.mm-title-input:hover {
+  border-color: var(--line-2) !important;
+}
+.mm-title-input:focus {
+  border-color: rgba(122, 167, 255, 0.6) !important;
+}
+.tag {
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.mm-pane > .test-result {
+  margin: 0 18px 6px;
+}
+.test-result .tr-msg {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mm-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.mm-sec {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.015);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.mm-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+}
+.mm-sec-head .muted {
+  font-weight: 400;
+  font-size: 12px;
+}
+.mm-fold {
+  width: 100%;
+  text-align: left;
+  color: var(--text);
+}
+.mm-fold svg {
+  color: var(--text-3);
+  transform: rotate(-90deg);
+  transition: transform 0.15s;
+}
+.mm-fold svg.rot {
+  transform: none;
+}
+.mm-empty {
+  border: 1px dashed var(--line-2);
+  border-radius: 12px;
+  padding: 18px 20px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.9;
+}
+.mm-empty-title {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 13.5px;
+  margin-bottom: 4px;
+}
+/* —— 模型行 —— */
+.mm-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mm-row {
+  display: grid;
+  grid-template-columns: 34px minmax(120px, 1fr) minmax(150px, 1.3fr) 82px 168px auto;
+  gap: 8px;
+  align-items: center;
+}
+.mm-row > input,
+.mm-row .combo input,
+.mm-row .select {
+  width: 100%;
+  padding: 6px 9px;
+  font-size: 12.5px;
+}
+.mm-row-head {
+  font-size: 11.5px;
+  color: var(--text-3);
+  padding: 0 0 2px;
+}
+.mm-row-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  margin: 0 -6px;
+  border-radius: 10px;
+}
+.mm-row-wrap:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+.mm-row-wrap.off .mm-row > input,
+.mm-row-wrap.off .mm-row .combo,
+.mm-row-wrap.off .mm-row .select,
+.mm-row-wrap.off .mm-price {
+  opacity: 0.45;
+}
+.mm-price {
+  display: flex;
+  gap: 4px;
+}
+.mm-price input {
+  width: 0;
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 12.5px;
+}
+.mm-price .select {
+  width: 66px !important;
+  flex: none;
+}
+.mm-row-actions {
+  display: flex;
+  gap: 2px;
+}
+.mm-row-actions .icon {
+  width: 28px;
+  height: 28px;
+}
+.mm-row-actions .icon.on {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.mm-row-wrap > .test-result {
+  margin-left: 42px;
+  padding: 6px 10px;
+}
+.mm-row-more {
+  margin-left: 42px;
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 12.5px;
+}
+.mm-row-more > label {
+  color: var(--text-2);
+}
+.mm-row-more .select {
+  justify-self: start;
+  min-width: 220px;
+}
+.mm-more-tip,
+.mm-tpl-wrap {
+  grid-column: 1 / -1;
+  font-size: 11.5px;
+}
+/* 小号开关（模型行里的启用） */
+.switch.mini input {
+  width: 15px;
+  height: 15px;
+}
+/* —— 底部操作栏 —— */
+.mm-modal .mm-actions {
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.mm-dirty {
+  font-size: 12px;
+  color: var(--warn);
+}
+/* —— 总览 —— */
+.mm-overview {
+  padding-top: 16px;
+  gap: 18px;
+}
+.mm-overview .ov-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--text);
+}
+.mm-overview .ov-name:hover {
+  border-color: var(--line-3);
+  background: var(--surface-3);
+}
+.ov-prov {
+  font-size: 11px;
+  color: var(--text-3);
+}
+/* 拉取模型列表：占满模型区 */
+.mm-sec-models .pull-list {
+  max-height: 360px;
+}
