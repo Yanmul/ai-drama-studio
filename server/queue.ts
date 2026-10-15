@@ -27,6 +27,8 @@ export const events = new EventEmitter();
 events.setMaxListeners(100);
 
 const jobs = new Map<string, Job>();
+// 排队中的任务 id，按入队先后排；pump 只看这里，不用每次把几千条已结束的任务筛一遍
+const queuedIds = new Set<string>();
 const running = new Map<string, number>(); // providerId -> 正在跑的数量
 const MAX_RETRY = 2;
 const POLL_TIMEOUT_MS = 30 * 60 * 1000;
@@ -79,6 +81,7 @@ export async function enqueue(req: GenerateRequest): Promise<Job[]> {
     job.cost = estimateCost(job, model.price);
     job.costEstimated = job.cost !== undefined;
     await persist(job);
+    queuedIds.add(job.id);
     created.push(job);
   }
   pump();
@@ -86,7 +89,12 @@ export async function enqueue(req: GenerateRequest): Promise<Job[]> {
 }
 
 function pump() {
-  const queued = [...jobs.values()].filter((j) => j.status === 'queued').sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const queued: Job[] = [];
+  for (const id of queuedIds) {
+    const j = jobs.get(id);
+    if (j?.status === 'queued') queued.push(j);
+    else queuedIds.delete(id); // 已开始 / 已取消的顺手清掉
+  }
   for (const job of queued) {
     resolveModel(job.request.modelId)
       .then(({ provider }) => {
@@ -94,6 +102,7 @@ function pump() {
         if (cur >= provider.concurrency || job.status !== 'queued') return;
         running.set(provider.id, cur + 1);
         job.status = 'running';
+        queuedIds.delete(job.id);
         start(job).finally(() => {
           running.set(provider.id, Math.max(0, (running.get(provider.id) || 1) - 1));
           pump();
@@ -252,6 +261,10 @@ function succeed(job: Job, outs: RemoteOutput[], cost?: number): Promise<void> {
 }
 
 async function saveOutputs(job: Job, outs: RemoteOutput[], cost?: number) {
+  // 厂商说成功了，却既没有文件也没有文字：当失败处理，别留一个空的「成功」
+  if (!outs.some((o) => o.kind !== 'text' || o.text?.trim())) {
+    return fail(job, new Error('服务商返回成功，但没有给出结果'));
+  }
   try {
     const { projectId, episodeId, nodeId } = job.request;
     const dir = paths.nodeAssets(projectId, episodeId, nodeId);
@@ -377,29 +390,45 @@ export function getJob(id: string) {
 
 /** 启动时恢复：排队的继续排；已提交的继续查询；没提交成功的标失败 */
 export async function recover() {
+  // 单个任务文件读不了 / 内容不对就跳过，别让整个服务起不来
+  const load = async (f: string) => {
+    try {
+      const j = await readJson<Job | null>(f, null);
+      return j && typeof j === 'object' && j.id && j.request ? j : null;
+    } catch (e) {
+      console.error(`读取任务 ${f} 失败，已跳过：`, e);
+      return null;
+    }
+  };
   for (const month of await listDirs(paths.jobsDoneRoot())) {
     for (const f of await listFiles(paths.jobsDone(month))) {
-      const j = await readJson<Job | null>(f, null);
+      const j = await load(f);
       if (j) jobs.set(j.id, j);
     }
   }
   if (!fs.existsSync(paths.jobsActive())) return;
+  const queued: Job[] = [];
   for (const f of await listFiles(paths.jobsActive())) {
-    const j = await readJson<Job | null>(f, null);
+    const j = await load(f);
     if (!j) continue;
     jobs.set(j.id, j);
-    if (j.status === 'queued') continue;
-    if (j.status === 'running' && j.remoteId) {
-      // 先把接着查询的任务计入并发名额，再 pump 排队的，免得重启后一下子超出并发上限
-      try {
-        trackPoll(j, await contextFor(j));
-      } catch (e) {
-        await fail(j, e, true);
+    try {
+      if (j.status === 'queued') queued.push(j);
+      else if (j.status === 'running' && j.remoteId) {
+        // 先把接着查询的任务计入并发名额，再 pump 排队的，免得重启后一下子超出并发上限
+        try {
+          trackPoll(j, await contextFor(j));
+        } catch (e) {
+          await fail(j, e, true);
+        }
+      } else if (j.status === 'running') {
+        await fail(j, new Error('服务重启时这个任务还没提交成功，请重新生成'));
       }
-    } else if (j.status === 'running') {
-      await fail(j, new Error('服务重启时这个任务还没提交成功，请重新生成'));
+    } catch (e) {
+      console.error(`恢复任务 ${j.id} 失败：`, e);
     }
   }
+  queued.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '')).forEach((j) => queuedIds.add(j.id));
   pump();
 }
 

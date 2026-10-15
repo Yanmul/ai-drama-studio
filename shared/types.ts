@@ -257,6 +257,8 @@ export interface CanvasFile {
   edges: Array<{ id: string; source: string; target: string; sourceHandle?: string | null; targetHandle?: string | null }>;
   viewport?: { x: number; y: number; zoom: number };
   savedAt?: string;
+  /** 只在保存请求里带：前端上次读到 / 存下的 savedAt，用来发现别的窗口改过（不会写进文件） */
+  baseSavedAt?: string;
 }
 
 /** 服务器推送的事件 */

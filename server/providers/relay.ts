@@ -12,7 +12,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { absFromRel, mimeOf } from '../storage.js';
 import type { Adapter, AdapterContext, PollResult, PreparedRequest, SubmitResult } from './types.js';
-import { AdapterError, httpJson, joinUrl } from './types.js';
+import { AdapterError, explainVendorError, httpJson, joinUrl } from './types.js';
 import { arkImage, arkVideoPoll, arkVideoSubmit, refUrl } from './volcengine.js';
 
 function headers(ctx: { apiKey: string }) {
@@ -165,7 +165,7 @@ async function openaiVideosPoll(ctx: AdapterContext, remoteId: string): Promise<
   if (['failed', 'error', 'cancelled', 'canceled', 'expired'].includes(status)) {
     const e = data?.error ?? d.error;
     const msg = typeof e === 'string' ? e : e?.message ? `${e.code ? e.code + ' ' : ''}${e.message}` : `任务状态 ${status}`;
-    return { status: 'failed', error: msg };
+    return { status: 'failed', error: explainVendorError(msg) };
   }
   const progress = data?.progress ?? d.progress;
   return { status: 'running', note: `中转站${status === 'queued' ? '排队中' : '生成中'}${progress != null && progress !== '' ? ` ${progress}%` : ''}` };
@@ -223,10 +223,8 @@ export const relayAdapter: Adapter = {
   },
 
   async listModels(ctx) {
-    const data = await httpJson<any>(joinUrl(base(ctx), 'models'), { headers: headers(ctx), timeoutMs: 20_000 }).catch((e: any) => {
-      if (/HTTP 40[13]/.test(String(e?.message))) throw new AdapterError(`key 无效或没有权限：${e.message}`);
-      throw e;
-    });
+    // 401 / 403 的中文说明 httpJson 里已经加了
+    const data = await httpJson<any>(joinUrl(base(ctx), 'models'), { headers: headers(ctx), timeoutMs: 20_000 });
     const list: any[] = Array.isArray(data?.data) ? data.data : [];
     return [...new Set(list.map((m) => String(m?.id ?? '')).filter(Boolean))].sort();
   },

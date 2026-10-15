@@ -104,7 +104,8 @@ export async function httpJson<T = any>(
     const code = e?.cause?.code;
     const msg = e?.name === 'AbortError' ? '请求超时' : `网络错误：${code || e?.message || e}`;
     const notSent = e?.name !== 'AbortError' && NOT_SENT_CODES.has(code);
-    throw new AdapterError(`${msg}（${shortUrl(url)}）`, notSent, !notSent);
+    const hint = e?.name === 'AbortError' ? '服务商太久没响应：稍后再试，或去厂商控制台看任务是否已经生成' : '连不上服务商：检查网络、代理和接口地址';
+    throw new AdapterError(`${hint}。原始信息：${msg}（${shortUrl(url)}）`, notSent, !notSent);
   } finally {
     clearTimeout(timer);
   }
@@ -116,9 +117,22 @@ export async function httpJson<T = any>(
     /* 不是 JSON */
   }
   if (!resp.ok) {
-    throw new AdapterError(`HTTP ${resp.status}：${errorText(data, text)}`, resp.status === 429, resp.status >= 500);
+    throw new AdapterError(explainVendorError(`HTTP ${resp.status}：${errorText(data, text)}`, resp.status), resp.status === 429, resp.status >= 500);
   }
   return (data ?? {}) as T;
+}
+
+/** 厂商报错 → 前面加一句中文说明和该怎么办，原文留在后面方便排查 */
+export function explainVendorError(detail: string, status?: number): string {
+  const d = detail.toLowerCase();
+  let hint = '';
+  if (/sensitive|moderation|safety|violat|违规|审核|敏感/.test(d)) hint = '内容没通过审核：换个说法或换参考图';
+  else if (status === 402 || /insufficient|余额|balance|欠费/.test(d) || (status !== 429 && /quota/.test(d))) hint = '余额不足：去服务商后台充值';
+  else if (status === 401 || status === 403) hint = 'key 无效或没有权限：去「模型管理」检查 key 和分组';
+  else if (status === 429) hint = '请求太频繁或并发超限：稍后再试，或在模型管理里调低「同时最多」';
+  else if (status === 404) hint = '接口地址或模型 ID 不对：去「模型管理」检查';
+  else if (status && status >= 500) hint = '服务商那边出错了：稍后再试';
+  return hint ? `${hint}。原始信息：${detail}` : detail;
 }
 
 export function errorText(data: any, raw = ''): string {

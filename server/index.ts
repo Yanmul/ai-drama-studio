@@ -5,6 +5,7 @@ import multipart from '@fastify/multipart';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import type { CanvasFile, GenerateRequest, ServerEvent } from '../shared/types.js';
 import { PRESETS } from './presets.js';
 import {
@@ -31,8 +32,12 @@ import { PROJECT_ROOT, WORKSPACE, absFromRel, ensureDir, kindOfFile, newId, path
 const PORT = Number(process.env.PORT || 6688);
 const app = Fastify({ logger: false, bodyLimit: 50 * 1024 * 1024 });
 
-app.setErrorHandler((err: any, _req, reply) => {
-  const status = err.statusCode && err.statusCode < 500 ? err.statusCode : 400;
+app.setErrorHandler((err: any, req, reply) => {
+  // 硬盘满了、没权限、读写出错这类（ENOSPC / EACCES / EIO…）是服务器自己的问题，算 500；
+  // 我们自己 throw new Error('…') 的、参数校验没过的，都算请求的问题，400
+  const sysErr = typeof err?.code === 'string' && err.code.startsWith('E') && Boolean(err.syscall);
+  const status = err?.statusCode >= 500 || sysErr ? 500 : err?.statusCode >= 400 ? err.statusCode : 400;
+  if (status >= 500) console.error(`${req.method} ${req.url} 出错：`, err?.stack || err);
   reply.status(status).send({ error: String(err?.message || err) });
 });
 
@@ -61,7 +66,9 @@ async function publicHosts(): Promise<Set<string>> {
 }
 
 await ensureDir(WORKSPACE);
-await app.register(multipart, { limits: { fileSize: 500 * 1024 * 1024 } });
+const UPLOAD_MAX_MB = 500;
+const TOO_LARGE = `文件太大了：单个文件最大 ${UPLOAD_MAX_MB} MB`;
+await app.register(multipart, { limits: { fileSize: UPLOAD_MAX_MB * 1024 * 1024 } });
 await app.register(fastifyStatic, { root: WORKSPACE, prefix: '/files/', decorateReply: false });
 const dist = path.join(PROJECT_ROOT, 'dist');
 if (fs.existsSync(dist)) await app.register(fastifyStatic, { root: dist, prefix: '/', decorateReply: false });
@@ -108,10 +115,11 @@ app.get('/api/projects/:pid/episodes/:eid/canvas', async (req) => {
   const { pid, eid } = req.params as any;
   return readCanvas(pid, eid);
 });
-app.put('/api/projects/:pid/episodes/:eid/canvas', async (req) => {
+app.put('/api/projects/:pid/episodes/:eid/canvas', async (req, reply) => {
   const { pid, eid } = req.params as any;
-  await saveCanvas(pid, eid, req.body as CanvasFile);
-  return { ok: true };
+  const r = await saveCanvas(pid, eid, req.body as CanvasFile);
+  if ('conflict' in r) return reply.status(409).send({ error: '这一集在别的窗口里改过了', conflict: true, savedAt: r.savedAt });
+  return r;
 });
 
 // —— 角色库 ——
@@ -137,15 +145,26 @@ app.post('/api/projects/:pid/upload', async (req) => {
     'video/mp4': '.mp4', 'video/quicktime': '.mov', 'video/webm': '.webm',
     'audio/mpeg': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/mp4': '.m4a',
   };
-  const ext = path.extname(part.filename || '').toLowerCase() || MIME_EXT[part.mimetype] || '.bin';
+  // 先按扩展名 / 类型判断，不是图片、视频、音频就不落盘
+  const ext = path.extname(part.filename || '').toLowerCase() || MIME_EXT[part.mimetype] || '';
+  const kind = ext ? kindOfFile(`x${ext}`) : 'other';
+  if (kind === 'other') {
+    part.file.resume(); // 把剩下的数据读掉，连接才能正常结束
+    throw new Error('只支持图片、视频、音频文件');
+  }
   const dir = paths.uploads(pid);
   await ensureDir(dir);
   const file = path.join(dir, `${newId('up_')}${ext}`);
-  await fsp.writeFile(file, await part.toBuffer());
-  const kind = kindOfFile(file);
-  if (kind === 'other') {
-    await fsp.rm(file, { force: true });
-    throw new Error('只支持图片、视频、音频文件');
+  // 边收边写进临时文件，大视频不会整个塞进内存；写完再改名
+  const tmp = `${file}.uploading`;
+  try {
+    await pipeline(part.file, fs.createWriteStream(tmp));
+    if (part.file.truncated) throw new Error(TOO_LARGE);
+    await fsp.rename(tmp, file);
+  } catch (e: any) {
+    await fsp.rm(tmp, { force: true });
+    if (e?.code === 'FST_REQ_FILE_TOO_LARGE') throw new Error(TOO_LARGE);
+    throw e;
   }
   return { file: rel(file), kind, name: part.filename };
 });

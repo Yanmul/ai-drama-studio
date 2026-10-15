@@ -9,7 +9,7 @@
 import { fileToDataUrl } from '../storage.js';
 import { seedreamSize } from '../presets.js';
 import type { Adapter, AdapterContext, PollResult, PreparedRequest, SubmitResult } from './types.js';
-import { AdapterError, httpJson, joinUrl } from './types.js';
+import { AdapterError, explainVendorError, httpJson, joinUrl } from './types.js';
 import type { RefInput } from '../../shared/types.js';
 
 export const ARK_DEFAULT_BASE = 'https://ark.cn-beijing.volces.com/api/v3';
@@ -101,7 +101,7 @@ export async function arkVideoPoll(base: string, ctx: AdapterContext, remoteId: 
   if (s === 'failed' || s === 'cancelled' || s === 'expired') {
     const e = t?.error;
     const msg = (e && (e.message || e.code)) || `任务状态 ${s}`;
-    return { status: 'failed', error: s === 'expired' ? `任务过期：${msg}` : String(msg) };
+    return { status: 'failed', error: s === 'expired' ? `任务过期：${msg}` : explainVendorError(String(msg)) };
   }
   return { status: 'running', note: s === 'queued' ? '方舟排队中' : '方舟生成中' };
 }
@@ -129,14 +129,9 @@ export const volcengineAdapter: Adapter = {
 
   async test(ctx) {
     const base = ctx.provider.baseUrl || ARK_DEFAULT_BASE;
-    try {
-      await httpJson(joinUrl(base, 'contents/generations/tasks?page_num=1&page_size=1'), { headers: headers(ctx), timeoutMs: 20_000 });
-      return '连接成功，key 有效';
-    } catch (e: any) {
-      const m = String(e?.message || e);
-      if (/HTTP 40[13]/.test(m)) throw new AdapterError(`key 无效或没有权限：${m}`);
-      throw e;
-    }
+    // 401 / 403 的中文说明 httpJson 里已经加了
+    await httpJson(joinUrl(base, 'contents/generations/tasks?page_num=1&page_size=1'), { headers: headers(ctx), timeoutMs: 20_000 });
+    return '连接成功，key 有效';
   },
 
   async submit(ctx, req) {

@@ -64,12 +64,21 @@ export async function ensureDir(dir: string) {
 }
 
 export async function readJson<T>(file: string, fallback: T): Promise<T> {
+  let txt: string;
   try {
-    const txt = await fsp.readFile(file, 'utf-8');
-    return JSON.parse(txt) as T;
+    txt = await fsp.readFile(file, 'utf-8');
   } catch (e: any) {
     if (e?.code === 'ENOENT') return fallback;
     throw new Error(`读取 ${rel(file)} 失败：${e?.message || e}`);
+  }
+  try {
+    return JSON.parse(txt) as T;
+  } catch (e: any) {
+    // 文件坏了（写到一半断电、手动改错）：改名留底，当作没有这个文件，别让整个页面打不开
+    const bad = `${file}.corrupt-${Date.now()}`;
+    console.error(`JSON 文件损坏，已改名为 ${bad}：${e?.message || e}`);
+    await fsp.rename(file, bad).catch(() => undefined);
+    return fallback;
   }
 }
 
