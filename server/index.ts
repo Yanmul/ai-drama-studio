@@ -24,7 +24,7 @@ import {
   updateProject,
 } from './projects.js';
 import { ADAPTERS, deleteProvider, listModels, listProviderViews, testProvider, upsertProvider } from './providers/index.js';
-import { cancelJob, enqueue, events, getJob, listJobs, recover, runQuickText } from './queue.js';
+import { cancelJob, enqueue, events, getJob, listJobs, recover, resumeJob, runQuickText } from './queue.js';
 import { addAssets, deleteAsset, listAssets, renameAsset, type AssetInput } from './assets.js';
 import { PROJECT_ROOT, WORKSPACE, ensureDir, kindOfFile, newId, paths, rel } from './storage.js';
 
@@ -149,6 +149,7 @@ app.get('/api/jobs', async (req) => {
   return listJobs({ projectId: q.projectId, episodeId: q.episodeId, limit: Number(q.limit) || 300 });
 });
 app.post('/api/jobs/:id/cancel', async (req) => cancelJob((req.params as any).id));
+app.post('/api/jobs/:id/resume', async (req) => resumeJob((req.params as any).id));
 app.post('/api/jobs/:id/retry', async (req) => {
   const j = getJob((req.params as any).id);
   if (!j) throw new Error('任务不存在');

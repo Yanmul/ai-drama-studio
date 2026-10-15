@@ -63,6 +63,7 @@ export const api = {
   generate: (req: GenerateRequest) => call<Job[]>('POST', '/api/generate', req),
   jobs: (pid: string) => call<Job[]>('GET', `/api/jobs?projectId=${encodeURIComponent(pid)}`),
   cancelJob: (id: string) => call<Job>('POST', `/api/jobs/${id}/cancel`),
+  resumeJob: (id: string) => call<Job>('POST', `/api/jobs/${id}/resume`),
   retryJob: (id: string) => call<Job[]>('POST', `/api/jobs/${id}/retry`),
   quickText: (modelId: string, prompt: string) => call<{ text: string }>('POST', '/api/quick-text', { modelId, prompt }),
 

@@ -184,7 +184,7 @@ async function pollLoop(job: Job, ctx: AdapterContext) {
       if (r.status === 'succeeded') return succeed(job, r.outputs || [], r.cost);
       if (r.status === 'failed') return fail(job, new Error(r.error || '生成失败'));
       if (Date.now() - startAt > POLL_TIMEOUT_MS) {
-        return fail(job, new Error('查了 30 分钟还没出结果，先停止查询。厂商那边可能还在生成，可以在队列里点「重新查询」'));
+        return fail(job, new Error('查了 30 分钟还没出结果，先停止查询。厂商那边可能还在生成，可以在队列里点「重新查询」'), true);
       }
       if (r.note && r.note !== job.note) {
         job.note = r.note;
@@ -193,7 +193,7 @@ async function pollLoop(job: Job, ctx: AdapterContext) {
     } catch (e: any) {
       if (job.status !== 'running') return;
       errors += 1;
-      if (errors >= 5) return fail(job, e);
+      if (errors >= 5) return fail(job, new Error(`连续 5 次查询出错，先停止查询：${e?.message || e}。可以在队列里点「重新查询」`), true);
       job.note = `查询出错，稍后再试：${e?.message || e}`;
       await persist(job);
     }
@@ -287,20 +287,29 @@ async function saveOutputs(job: Job, outs: RemoteOutput[], cost?: number) {
     job.status = 'succeeded';
     job.note = undefined;
     job.error = undefined;
+    job.resumable = undefined;
+    job.pendingOutputs = undefined;
     if (cost !== undefined) {
       job.cost = cost;
       job.costEstimated = false;
     }
     job.finishedAt = nowIso();
     await persist(job);
-  } catch (e) {
-    await fail(job, e);
+  } catch (e: any) {
+    // 厂商已经出了结果、只是没下载下来：留着链接，可以在队列里重新下载，不用再花钱生成
+    const urls = outs.filter((o) => o.kind !== 'text' && o.url && !o.url.startsWith('data:'));
+    if (urls.length > 0 && urls.length === outs.filter((o) => o.kind !== 'text').length) {
+      job.pendingOutputs = urls.map((o) => ({ kind: o.kind, url: o.url!, mime: o.mime }));
+    }
+    const canResume = Boolean(job.remoteId || job.pendingOutputs);
+    await fail(job, new Error(`${e?.message || e}${canResume ? '。结果已经生成，可以在队列里点「重新查询」重新下载，不会再扣费' : ''}`), canResume);
   }
 }
 
-async function fail(job: Job, e: any) {
+async function fail(job: Job, e: any, resumable = false) {
   if (isCancelled(job)) return;
   job.status = 'failed';
+  job.resumable = resumable || undefined;
   job.error = String(e?.message || e);
   job.note = undefined;
   job.finishedAt = nowIso();
@@ -322,6 +331,35 @@ export async function cancelJob(id: string): Promise<Job | undefined> {
       .then((ctx) => ADAPTERS[ctx.provider.type].cancel?.(ctx, remoteId))
       .catch(() => undefined);
   }
+  return job;
+}
+
+/** 跑一个轮询循环，占用服务商的并发名额（重启恢复、重新查询共用） */
+function trackPoll(job: Job, ctx: AdapterContext) {
+  const pid = ctx.provider.id;
+  running.set(pid, (running.get(pid) || 0) + 1);
+  pollLoop(job, ctx).finally(() => {
+    running.set(pid, Math.max(0, (running.get(pid) || 1) - 1));
+    pump();
+  });
+}
+
+/** 重新查询：厂商那边已经出了结果（或还在生成），只重新查询 / 下载，不重新提交、不再扣费 */
+export async function resumeJob(id: string): Promise<Job> {
+  const job = jobs.get(id);
+  if (!job) throw new Error('任务不存在');
+  if (job.status !== 'failed' || !job.resumable) throw new Error('这个任务不能重新查询，请用「重新生成」');
+  const ctx = await contextFor(job);
+  const pending = job.pendingOutputs;
+  job.status = 'running';
+  job.error = undefined;
+  job.resumable = undefined;
+  job.finishedAt = undefined;
+  job.note = '重新查询中';
+  await persist(job);
+  // 有任务号就重新查一次（能拿到新的下载链接）；同步接口没有任务号，就用上次留下的链接再下载
+  if (job.remoteId) trackPoll(job, ctx);
+  else if (pending?.length) succeed(job, pending);
   return job;
 }
 

@@ -145,6 +145,10 @@ export interface Job {
   remoteId?: string;
   attempts: number;
   error?: string;
+  /** 厂商那边可能已经出了结果（下载失败、查询超时），可以只重新查询 / 下载，不用重新提交 */
+  resumable?: boolean;
+  /** 同步接口已经给了结果链接但下载失败时，留着链接方便重新下载 */
+  pendingOutputs?: { kind: Capability; url: string; mime?: string }[];
   note?: string;
   cost?: number;
   costEstimated?: boolean;

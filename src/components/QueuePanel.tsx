@@ -1,6 +1,6 @@
 // 右侧队列面板：所有生成任务的进度、花费、失败原因
 import { useReactFlow } from '@xyflow/react';
-import { CheckCircle2, CircleSlash, Crosshair, Loader2, RotateCcw, X, XCircle } from 'lucide-react';
+import { CheckCircle2, CircleSlash, Crosshair, DownloadCloud, Loader2, RotateCcw, X, XCircle } from 'lucide-react';
 import type { Job } from '../../shared/types';
 import { api } from '../api';
 import { useApp } from '../context';
@@ -77,6 +77,11 @@ export function QueuePanel({ onClose }: { onClose: () => void }) {
                 {(j.status === 'queued' || j.status === 'running') && (
                   <button className="icon" title="取消" onClick={() => api.cancelJob(j.id).then(merge).catch((e) => toast(e.message, 'error'))}>
                     <CircleSlash size={14} />
+                  </button>
+                )}
+                {j.status === 'failed' && j.resumable && (
+                  <button className="icon" title="重新查询：厂商那边可能已经出了结果，只重新查询 / 下载，不会再扣费" onClick={() => api.resumeJob(j.id).then(merge).catch((e) => toast(e.message, 'error'))}>
+                    <DownloadCloud size={14} />
                   </button>
                 )}
                 {(j.status === 'failed' || j.status === 'cancelled') && (
