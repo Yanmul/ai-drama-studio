@@ -226,7 +226,8 @@ app.setNotFoundHandler((req, reply) => {
   if (req.url.startsWith('/api/') || req.url.startsWith('/files/')) return reply.status(404).send({ error: '不存在' });
   const index = path.join(dist, 'index.html');
   if (fs.existsSync(index)) return reply.type('text/html').send(fs.readFileSync(index));
-  reply.status(404).send('前端还没有构建：请运行 npm run build，或用 npm run dev 开发模式');
+  // 没有构建好的界面 = 在用开发模式：直接跳到热更新的界面（vite.config.ts 里固定的 5188）
+  reply.redirect(`http://127.0.0.1:5188${req.url}`);
 });
 
 await recover();
