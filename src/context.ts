@@ -19,7 +19,7 @@ export interface AppCtx {
   /** 切到另一集，可以顺便定位到某个节点 */
   openEpisode: (episodeId: string, focusNodeId?: string) => void;
   /** 打开「从生成历史选择」，选中后回调 */
-  pickFromHistory: (cb: (file: string, kind: 'image' | 'video' | 'audio') => void) => void;
+  pickFromHistory: (cb: (file: string, kind: 'image' | 'video' | 'audio', createdAt?: string) => void) => void;
 }
 
 export const AppContext = createContext<AppCtx>(null as any);
@@ -34,12 +34,13 @@ export interface CanvasCtx {
   addNode: (
     kind: NodeKind,
     pos: { x: number; y: number },
-    opts?: { title?: string; version?: Omit<Version, 'id' | 'createdAt'>; characterId?: string; text?: string; connectTo?: string; connectFrom?: string },
+    opts?: { title?: string; version?: Omit<Version, 'id' | 'createdAt'> & { createdAt?: string }; characterId?: string; text?: string; connectTo?: string; connectFrom?: string },
   ) => string;
   /** 上传文件，变成一个新节点 */
   uploadAsNode: (file: File, pos: { x: number; y: number }, connectTo?: string) => Promise<void>;
   /** skipBusyCheck：已确认过「这个节点已有任务在跑」时不再问 */
-  submit: (nodeId: string, opts?: { skipBusyCheck?: boolean; quiet?: boolean }) => Promise<void>;
+  /** 返回是否真的提交了 */
+  submit: (nodeId: string, opts?: { skipBusyCheck?: boolean; quiet?: boolean }) => Promise<boolean | void>;
   /** 一次生成多个节点（会先确认数量和预估花费） */
   submitMany: (nodeIds: string[]) => Promise<void>;
   /** 把屏幕坐标换成画布坐标 */

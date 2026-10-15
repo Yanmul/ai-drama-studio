@@ -116,7 +116,7 @@ export function createEpisode(pid: string, title?: string): Promise<Episode> {
     }
     const e: Episode = { id: `ep${String(index).padStart(2, '0')}`, index, title: title || `第${index}集` };
     await writeJson(path.join(paths.episode(pid, e.id), 'episode.json'), e);
-    await writeJson(paths.canvas(pid, e.id), { nodes: [], edges: [] } satisfies CanvasFile);
+    await writeJson(paths.canvas(pid, e.id), { nodes: [], edges: [], savedAt: nowIso() } satisfies CanvasFile);
     return e;
   });
 }
@@ -156,23 +156,46 @@ export function saveCanvas(pid: string, eid: string, canvas: CanvasFile): Promis
   if (!canvas || typeof canvas !== 'object' || !Array.isArray(canvas.nodes) || !Array.isArray(canvas.edges)) {
     return Promise.reject(new Error('画布数据不对：nodes 和 edges 必须是数组'));
   }
+  // 剧集不存在（删掉的项目、写错的 eid）不建孤儿目录
+  if (!fs.existsSync(path.join(paths.episode(pid, eid), 'episode.json'))) return Promise.reject(new Error('这一集不存在了'));
   const file = paths.canvas(pid, eid);
   const { baseSavedAt, savedAt: _old, ...rest } = canvas;
   return serial(`canvas:${file}`, async () => {
     const disk = await readJson<CanvasFile | null>(file, null);
-    // 硬盘上没有 savedAt（新建的、或坏了被挪走）就不算冲突，直接写
+    // 硬盘上没有 savedAt（坏了被挪走）就不算冲突，直接写
     if (baseSavedAt && disk?.savedAt && disk.savedAt !== baseSavedAt) return { conflict: true, savedAt: disk.savedAt };
-    // 自动保存很频繁，历史版本最多每 2 分钟留一份
-    const last = lastBackup.get(file) || 0;
-    if (Date.now() - last > 120_000) {
-      lastBackup.set(file, Date.now());
-      await rotateBackups(file);
-    }
-    // 保证新的 savedAt 一定和旧的不同（同一毫秒内连存两次也能分辨）
-    const prev = Date.parse(disk?.savedAt || '');
-    const savedAt = prev >= Date.now() ? new Date(prev + 1).toISOString() : nowIso();
-    await writeJson(file, { ...rest, savedAt });
-    return { ok: true, savedAt };
+    return { ok: true, savedAt: await writeCanvasLocked(file, disk, rest) };
+  });
+}
+
+/** 在保存队列里写画布（调用方已经拿到队列锁）；返回新的 savedAt */
+async function writeCanvasLocked(file: string, disk: CanvasFile | null, content: Omit<CanvasFile, 'savedAt' | 'baseSavedAt'>) {
+  // 自动保存很频繁，历史版本最多每 2 分钟留一份
+  const last = lastBackup.get(file) || 0;
+  if (Date.now() - last > 120_000) {
+    lastBackup.set(file, Date.now());
+    await rotateBackups(file);
+  }
+  // 保证新的 savedAt 一定和旧的不同（同一毫秒内连存两次也能分辨）
+  const prev = Date.parse(disk?.savedAt || '');
+  const savedAt = prev >= Date.now() ? new Date(prev + 1).toISOString() : nowIso();
+  await writeJson(file, { ...content, savedAt });
+  return savedAt;
+}
+
+/**
+ * 在保存队列里「现读、现改、现写」画布（自动清理用）：拿最新的硬盘内容改，不会冲掉刚保存进来的改动。
+ * fn 返回 null 表示不用改。
+ */
+export function updateCanvas(pid: string, eid: string, fn: (c: CanvasFile) => CanvasFile | null): Promise<string | undefined> {
+  const file = paths.canvas(pid, eid);
+  return serial(`canvas:${file}`, async () => {
+    const disk = await readJson<CanvasFile | null>(file, null);
+    if (!disk || !Array.isArray(disk.nodes)) return undefined;
+    const next = fn(disk);
+    if (!next) return undefined;
+    const { savedAt: _s, baseSavedAt: _b, ...rest } = next;
+    return writeCanvasLocked(file, disk, rest);
   });
 }
 
@@ -221,9 +244,14 @@ export async function listCanvasBackups(pid: string, eid: string) {
 
 /** 用某个历史版本恢复。走正常保存流程：现在这份会被轮换进 bak1，不会丢 */
 export async function restoreCanvasBackup(pid: string, eid: string, name: string) {
-  const m = /^canvas\.json\.bak(\d{1,2})$/.exec(name);
+  const m = /^canvas\.json\.bak([1-9]|1\d|20)$/.exec(name);
   if (!m) throw new Error('备份名称不对');
-  const c = JSON.parse(await fsp.readFile(`${paths.canvas(pid, eid)}.bak${m[1]}`, 'utf8'));
+  let c: any;
+  try {
+    c = JSON.parse(await fsp.readFile(`${paths.canvas(pid, eid)}.bak${m[1]}`, 'utf8'));
+  } catch (e: any) {
+    throw new Error(e?.code === 'ENOENT' ? '这个历史版本已经不在了，刷新一下列表' : '这个备份也读不出来，换一个试试');
+  }
   if (!c || !Array.isArray(c.nodes) || !Array.isArray(c.edges)) throw new Error('这个备份也读不出来，换一个试试');
   await saveCanvas(pid, eid, c);
   return { ok: true };

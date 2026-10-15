@@ -2,7 +2,7 @@
 // 你在面板里写的 @图1 / @视频1 / @音频1，会换成厂商认识的叫法（火山是「图片1」）。
 import type { Character, GenerateRequest, Project, ProviderModelConfig } from '../shared/types.js';
 import type { Adapter } from './providers/types.js';
-import { paths, readJson } from './storage.js';
+import { paths, readJson, safe } from './storage.js';
 import path from 'node:path';
 
 export async function loadProject(pid: string): Promise<Project | null> {
@@ -10,7 +10,7 @@ export async function loadProject(pid: string): Promise<Project | null> {
 }
 
 export async function loadCharacter(pid: string, cid: string): Promise<Character | null> {
-  return readJson<Character | null>(path.join(paths.characters(pid), `${cid}.json`), null);
+  return readJson<Character | null>(path.join(paths.characters(pid), `${safe(cid)}.json`), null);
 }
 
 const KIND_ZH = { image: '图', video: '视频', audio: '音频' } as const;

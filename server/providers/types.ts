@@ -101,15 +101,26 @@ export async function httpJson<T = any>(
       signal: ctrl.signal,
     });
   } catch (e: any) {
+    clearTimeout(timer);
     const code = e?.cause?.code;
     const msg = e?.name === 'AbortError' ? '请求超时' : `网络错误：${code || e?.message || e}`;
     const notSent = e?.name !== 'AbortError' && NOT_SENT_CODES.has(code);
     const hint = e?.name === 'AbortError' ? '服务商太久没响应：稍后再试，或去厂商控制台看任务是否已经生成' : '连不上服务商：检查网络、代理和接口地址';
     throw new AdapterError(`${hint}。原始信息：${msg}（${shortUrl(url)}）`, notSent, !notSent);
+  }
+  // 超时要管到响应体读完：有的服务商回了响应头、响应体却一直不发完
+  let text: string;
+  try {
+    text = await resp.text();
+  } catch (e: any) {
+    throw new AdapterError(
+      `服务商的响应没传完（${e?.name === 'AbortError' ? '超时' : '连接断了'}）：厂商可能已经收下任务，先去控制台确认再重试（${shortUrl(url)}）`,
+      false,
+      true,
+    );
   } finally {
     clearTimeout(timer);
   }
-  const text = await resp.text();
   let data: any = undefined;
   try {
     data = text ? JSON.parse(text) : undefined;
@@ -126,9 +137,13 @@ export async function httpJson<T = any>(
 export function explainVendorError(detail: string, status?: number): string {
   const d = detail.toLowerCase();
   let hint = '';
-  if (/sensitive|moderation|safety|violat|违规|审核|敏感/.test(d)) hint = '内容没通过审核：换个说法或换参考图';
-  else if (status === 402 || /insufficient|余额|balance|欠费/.test(d) || (status !== 429 && /quota/.test(d))) hint = '余额不足：去服务商后台充值';
-  else if (status === 401 || status === 403) hint = 'key 无效或没有权限：去「模型管理」检查 key 和分组';
+  // 先看明确的状态码，再看关键词（关键词收紧：别把 "constraint violation"、"case-sensitive" 这类参数错误当成审核没过）
+  const moderation = /content[_ ]?(policy|filter|moderation)|moderation|sensitive[_ ]?(content|words?)|safety[_ ]?(system|check|filter)|policy[_ ]?violation|违规|审核|敏感/.test(d);
+  const balance = /insufficient[_ ]?(balance|quota|credit|funds)|余额|balance|欠费|credit/.test(d);
+  if (status === 401) hint = 'key 无效或没有权限：去「模型管理」检查 key 和分组';
+  else if (status === 402 || balance) hint = '余额不足：去服务商后台充值';
+  else if (moderation) hint = '内容没通过审核：换个说法或换参考图';
+  else if (status === 403) hint = 'key 无效或没有权限：去「模型管理」检查 key 和分组';
   else if (status === 429) hint = '请求太频繁或并发超限：稍后再试，或在模型管理里调低「同时最多」';
   else if (status === 404) hint = '接口地址或模型 ID 不对：去「模型管理」检查';
   else if (status && status >= 500) hint = '服务商那边出错了：稍后再试';

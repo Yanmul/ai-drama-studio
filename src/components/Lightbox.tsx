@@ -1,5 +1,5 @@
 // 大图预览：一个节点的所有图片 / 视频版本，全屏看，← → 切换，Esc 关闭；能直接定稿、下载。
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight, Download, Star, X } from 'lucide-react';
 import type { Version } from '../../shared/types';
@@ -34,16 +34,23 @@ export function Lightbox({
     if (next) onIndex(next.i);
   };
 
+  const stepRef = useRef(step);
+  stepRef.current = step;
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
+      if (document.querySelector('.dialog-mask')) return; // 确认框开着：按键归它
+      // Delete / 退格也拦下：不然会删掉后面画布上选中的节点
+      if (!['Escape', 'ArrowLeft', 'ArrowRight', 'Delete', 'Backspace'].includes(e.key)) return;
       e.stopPropagation();
-      if (e.key === 'Escape') onClose();
-      else if (e.key === 'ArrowLeft') step(-1);
-      else if (e.key === 'ArrowRight') step(1);
+      e.preventDefault();
+      if (e.key === 'Escape') closeRef.current();
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') stepRef.current(e.key === 'ArrowLeft' ? -1 : 1);
     };
     window.addEventListener('keydown', k, true);
     return () => window.removeEventListener('keydown', k, true);
-  });
+  }, []);
 
   if (!cur) return null;
   const { v } = cur;

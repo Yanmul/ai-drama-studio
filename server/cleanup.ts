@@ -6,7 +6,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { CanvasFile } from '../shared/types.js';
 import { pruneDeletedVersions } from '../shared/cleanup.js';
-import { listCharacters, saveCanvas } from './projects.js';
+import { listCharacters, updateCanvas } from './projects.js';
 import { events } from './queue.js';
 import { kindOfFile, listDirs, nowIso, paths, readJson, rel, writeJson } from './storage.js';
 
@@ -95,16 +95,19 @@ async function doCleanup() {
     }
 
     // —— 节点里文件被删的版本一起去掉 ——
+    // 在保存队列里拿最新的画布来改（不用开头读的旧快照），免得冲掉清理期间刚保存的改动
     if (deleted.size) {
-      for (const [eid, canvas] of canvases) {
-        let changed = false;
-        const nodes = (canvas.nodes || []).map((n) => {
-          const next = n.data && pruneDeletedVersions(n.data, deleted);
-          if (!next) return n;
-          changed = true;
-          return { ...n, data: next };
+      for (const eid of canvases.keys()) {
+        await updateCanvas(pid, eid, (canvas) => {
+          let changed = false;
+          const nodes = canvas.nodes.map((n) => {
+            const next = n.data && pruneDeletedVersions(n.data, deleted);
+            if (!next) return n;
+            changed = true;
+            return { ...n, data: next };
+          });
+          return changed ? { ...canvas, nodes } : null;
         });
-        if (changed) await saveCanvas(pid, eid, { ...canvas, nodes });
       }
     }
   }

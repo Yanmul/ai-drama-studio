@@ -50,16 +50,31 @@ function applyJobs(nodes: FlowNode[], jobs: Job[], episodeId: string): FlowNode[
     const versions: Version[] = [...d.versions];
     let text = d.text;
     if (d.kind === 'text' && versions.length === 0 && d.text?.trim()) {
-      versions.push({ id: newId('v_'), kind: 'text', text: d.text, createdAt: j.createdAt, label: '原文' });
+      versions.push({ id: `v_${j.id}_src`, kind: 'text', text: d.text, createdAt: j.createdAt, label: '原文' });
     }
-    for (const o of j.outputs || []) {
-      versions.push({ id: newId('v_'), kind: o.kind, file: o.file, text: o.text, jobId: j.id, createdAt: j.finishedAt || j.createdAt });
+    (j.outputs || []).forEach((o, k) => {
+      versions.push({ id: `v_${j.id}_${k}`, kind: o.kind, file: o.file, text: o.text, jobId: j.id, createdAt: j.finishedAt || j.createdAt });
       if (o.kind === 'text') text = o.text;
-    }
+    });
     byId.set(n.id, { ...n, data: { ...d, versions, current: versions.length - 1, text } });
     changed = true;
   }
   return changed ? nodes.map((n) => byId.get(n.id)!) : nodes;
+}
+
+/** 合并两份节点数据里的版本（两个标签页 / 自动清理各自改过版本时用）；没变化返回 null */
+function mergeVersions(mine: NodeData, theirs: NodeData): NodeData | null {
+  const removed = new Set([...((mine.removedJobs as string[] | undefined) || []), ...((theirs.removedJobs as string[] | undefined) || [])]);
+  const byId = new Map<string, Version>();
+  for (const v of [...(mine.versions || []), ...(theirs.versions || [])]) if (!byId.has(v.id)) byId.set(v.id, v);
+  const versions = [...byId.values()].filter((v) => !v.jobId || !removed.has(v.jobId));
+  const same = versions.length === mine.versions.length && versions.every((v, i) => v.id === mine.versions[i]?.id);
+  if (same && removed.size === ((mine.removedJobs as string[] | undefined) || []).length) return null;
+  const shown = mine.versions[mine.current];
+  let current = shown ? versions.findIndex((v) => v.id === shown.id) : -1;
+  if (current < 0) current = versions.length - 1;
+  const starred = [mine.starred, theirs.starred].find((id) => id && versions.some((v) => v.id === id));
+  return { ...mine, versions, current, starred, removedJobs: [...removed] };
 }
 
 export function Canvas({ project, episode }: { project: Project; episode: Episode }) {
@@ -226,6 +241,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           return;
         }
         savedAt.current = c.savedAt;
+        lastSavedBody.current = normalize(c);
         lastSavedKey.current = keyOf({ nodes: (c.nodes || []).map((n) => ({ id: n.id, type: 'media', position: n.position, data: n.data })), edges: (c.edges || []).map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle })), viewport: c.viewport });
         const ns = applyJobs((c.nodes || []).map((n) => ({ ...n, type: 'media' })) as FlowNode[], jobsRef.current, episode.id);
         setNodes(ns);
@@ -237,6 +253,8 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
         future.current = [];
         lastSnap.current = '';
         lastStable.current = '';
+        paused.current = false;
+        dirty.current = false;
         setSaveState('saved');
         setLoaded(true);
         // 从队列面板「定位」过来的：加载完把那个节点放到屏幕中间并选中
@@ -289,11 +307,21 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
   const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving' | 'error'>('saved');
   const inFlight = useRef(false);
   const again = useRef(false); // 保存途中又改了：这次存完再存一次
-  const conflictOpen = useRef(false);
+  const loadedRef = useRef(false);
+  loadedRef.current = loaded;
+  const paused = useRef(false); // 正在处理冲突 / 重新加载：先不保存
   // 上次存下（或刚读进来）的内容：内容没变就不发保存请求。
   // 不然打开画布时节点量尺寸、套用生成结果都会触发一次「保存」，两个标签页开着同一集时会互相顶掉
   const lastSavedKey = useRef('');
+  const lastSavedBody = useRef<CanvasFile | null>(null); // 上次存下 / 读进来的内容：冲突时判断「对面改了什么」
+  const dirtySince = useRef(0); // 从什么时候开始有没存的改动（一直在操作也最多等 3 秒就存）
   const keyOf = (c: CanvasFile) => JSON.stringify([c.nodes, c.edges, c.viewport]);
+  // 统一成保存时的字段，方便比较硬盘上的和页面上的是不是同一份内容
+  const normalize = (c: CanvasFile): CanvasFile => ({
+    nodes: (c.nodes || []).map((n) => ({ id: n.id, type: 'media', position: n.position, data: n.data })),
+    edges: (c.edges || []).map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle })),
+    viewport: c.viewport,
+  });
   const bodyNow = (): CanvasFile => ({
     nodes: nodesRef.current.map((n) => ({ id: n.id, type: 'media', position: n.position, data: n.data })),
     edges: edgesRef.current.map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle })),
@@ -303,19 +331,23 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
   const save = useCallback(
     (keepalive = false, force = false): boolean => {
       window.clearTimeout(saveTimer.current);
-      dirty.current = false;
+      if (!loadedRef.current || paused.current) return true; // 还没读完 / 正在处理冲突：不存
       const body: CanvasFile = { ...bodyNow(), baseSavedAt: force ? undefined : savedAt.current };
       const small = JSON.stringify(body).length < 60_000;
       const key = keyOf(body);
       if (!force && key === lastSavedKey.current) {
+        dirty.current = false;
+        dirtySince.current = 0;
         if (!inFlight.current) setSaveState('saved');
         return true;
       }
-      // 关页面时等不了排队，直接发
+      // 上一次还没存完：排队（dirty 保持为真，关页面时还会补发）；关页面时等不了排队，直接发
       if (inFlight.current && !keepalive) {
         again.current = true;
         return small;
       }
+      dirty.current = false;
+      dirtySince.current = 0;
       inFlight.current = true;
       setSaveState('saving');
       api
@@ -323,31 +355,22 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
         .then((r) => {
           if (r?.savedAt) savedAt.current = r.savedAt;
           lastSavedKey.current = key;
+          lastSavedBody.current = normalize(body);
           setSaveState(dirty.current ? 'dirty' : 'saved');
         })
-        .catch(async (e: any) => {
+        .catch((e: any) => {
           if (e.conflict) {
-            // 别的窗口改过这一集：问用户留哪边
-            setSaveState('error');
-            if (conflictOpen.current) return;
-            conflictOpen.current = true;
-            const overwrite = await confirmDialog({
-              title: '这一集在别的窗口里改过了',
-              message: '可能同时开了两个标签页。\n「用这里的覆盖」会保存当前页面的内容；「重新加载」会丢掉这里没保存的改动，换成另一个窗口保存的版本。',
-              okText: '用这里的覆盖',
-              cancelText: '重新加载',
-            });
-            conflictOpen.current = false;
-            if (overwrite) saveRef.current(false, true);
-            else setReloadTick((t) => t + 1);
+            dirty.current = true;
+            handleConflict(body);
             return;
           }
+          dirty.current = true;
           setSaveState('error');
           toast(`保存失败：${e.message}`, 'error', { label: '重试', onClick: () => saveRef.current() });
         })
         .finally(() => {
           inFlight.current = false;
-          if (again.current) {
+          if (again.current && !paused.current) {
             again.current = false;
             saveRef.current();
           }
@@ -356,11 +379,65 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     },
     [project.id, episode.id],
   );
+  // 保存冲突：硬盘上的版本号变了（别的标签页存过、或自动清理改过）
+  const handleConflict = async (body: CanvasFile) => {
+    if (paused.current) return;
+    paused.current = true;
+    again.current = false;
+    window.clearTimeout(saveTimer.current);
+    setSaveState('error');
+    // 两边只差在「版本」上（另一个标签页先存了生成结果、自动清理去掉了版本）：把两边的版本合起来接着存，不打扰用户。
+    // 只有正文、节点、连线、位置这些用户改的内容不一样，才问用户留哪边
+    try {
+      const disk = await api.canvas(project.id, episode.id);
+      const theirs = normalize(disk);
+      const mine = normalize(body);
+      const userKey = (c: CanvasFile) => stable(JSON.stringify({ nodes: c.nodes, edges: c.edges }));
+      // 对面相对上次保存只改了版本（或者两边用户内容本来就一样）：合并版本，保留这边没存的修改
+      const base = lastSavedBody.current;
+      if (!disk.corrupt && (userKey(theirs) === userKey(mine) || (base && userKey(theirs) === userKey(base)))) {
+        const diskData = new Map(theirs.nodes.map((n) => [n.id, n.data]));
+        setNodes((ns) =>
+          ns.map((n) => {
+            const other = diskData.get(n.id);
+            const merged = other && mergeVersions(n.data, other);
+            return merged ? { ...n, data: merged } : n;
+          }),
+        );
+        savedAt.current = disk.savedAt;
+        paused.current = false;
+        setTimeout(() => saveRef.current(), 30); // 等合并后的节点进到 nodesRef 再存
+        return;
+      }
+    } catch {
+      /* 读不到就照常问用户 */
+    }
+    const overwrite = await confirmDialog({
+      title: '这一集在别的窗口里改过了',
+      message: '可能同时开了两个标签页。\n「用这里的覆盖」会保存当前页面的内容；「重新加载」会丢掉这里没保存的改动，换成另一个窗口保存的版本。',
+      okText: '用这里的覆盖',
+      cancelText: '重新加载',
+    });
+    if (overwrite) {
+      paused.current = false;
+      saveRef.current(false, true);
+    } else {
+      // 重新加载：丢掉排队的保存，读完新内容再恢复（paused 在加载完成时解除）
+      dirty.current = false;
+      again.current = false;
+      window.clearTimeout(saveTimer.current);
+      setReloadTick((t) => t + 1);
+    }
+  };
+
   const scheduleSave = () => {
     dirty.current = true;
+    if (!dirtySince.current) dirtySince.current = Date.now();
     setSaveState((st) => (st === 'saving' ? st : 'dirty'));
     window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(() => save(), 800);
+    // 停手 0.8 秒后存；一直在操作（点来点去也会重新计时）的话，最多 3 秒也会存一次
+    const wait = Date.now() - dirtySince.current > 3000 ? 0 : 800;
+    saveTimer.current = window.setTimeout(() => save(), wait);
   };
   const saveRef = useRef(save);
   saveRef.current = save;
@@ -404,7 +481,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
         text: opts.text ?? (kind === 'text' || kind === 'script' ? '' : undefined),
       });
       if (opts.version) {
-        data.versions = [{ ...opts.version, id: newId('v_'), createdAt: new Date().toISOString() }];
+        data.versions = [{ createdAt: new Date().toISOString(), ...opts.version, id: newId('v_') }];
         data.current = 0;
       }
       rf.addNodes({ id, type: 'media', position: pos, data, selected: false });
@@ -439,7 +516,10 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       const cap = KIND_CAP[n.data.kind];
       if (!cap) return;
       const model = models.find((m) => m.id === n.data.gen.modelId) || pickModel(models, cap);
-      if (!model) return toast(`还没有可用的${KIND_LABEL[n.data.kind]}模型`, 'error');
+      if (!model) {
+        toast(`还没有可用的${KIND_LABEL[n.data.kind]}模型`, 'error');
+        return false;
+      }
       const running = activeOf(nodeId);
       if (running && !opts.skipBusyCheck) {
         const ok = await confirmDialog({
@@ -447,7 +527,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           message: '再点会再提交一个新任务，会再扣一次费用。确定要再生成一个吗？',
           okText: '再生成一个',
         });
-        if (!ok) return;
+        if (!ok) return false;
       }
       const sources = rf
         .getEdges()
@@ -456,13 +536,18 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
         .filter(Boolean)
         .map((s) => ({ id: s!.id, data: s!.data }));
       const req = buildRequest(project.id, episode.id, nodeId, n.data, model, sources);
-      if (!req.prompt.trim() && !req.inputTexts.length && !req.refs.length) return toast('先写点提示词，或者连一个文本节点进来', 'error');
+      if (!req.prompt.trim() && !req.inputTexts.length && !req.refs.length) {
+        toast(`「${n.data.title}」还没有提示词：先写点提示词，或者连一个文本节点进来`, 'error');
+        return false;
+      }
       try {
         const created = await api.generate(req);
         app.setJobs((prev) => [...created, ...prev.filter((p) => !created.some((c) => c.id === p.id))]);
         if (!opts.quiet) toast(created.length > 1 ? `已提交 ${created.length} 个任务` : '已提交，生成好了会自动出现在节点里');
+        return true;
       } catch (e: any) {
         toast(e.message, 'error');
+        return false;
       }
     },
     [models, project.id, episode.id],
@@ -472,7 +557,10 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
   const submitMany = useCallback(
     async (ids: string[]) => {
       if (!ids.length) return;
-      if (ids.length === 1) return submit(ids[0]);
+      if (ids.length === 1) {
+        await submit(ids[0]);
+        return;
+      }
       let total = 0;
       let unknown = 0;
       for (const id of ids) {
@@ -495,8 +583,9 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
         okText: `生成 ${ids.length} 个`,
       });
       if (!ok) return;
-      for (const id of ids) await submit(id, { skipBusyCheck: true, quiet: true });
-      toast(`已提交 ${ids.length} 个节点，生成好了会自动出现在各自节点里`);
+      let done = 0;
+      for (const id of ids) if (await submit(id, { skipBusyCheck: true, quiet: true })) done += 1;
+      if (done) toast(done === ids.length ? `已提交 ${done} 个节点，生成好了会自动出现在各自节点里` : `已提交 ${done} 个，另外 ${ids.length - done} 个没提交上（见上面的提示）`);
     },
     [submit, models],
   );
@@ -585,7 +674,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       return;
     }
     if (a.history) {
-      pickFromHistory((file, kind) => addNode(kind, pos, { version: { kind, file, label: '历史' }, ...link }));
+      pickFromHistory((file, kind, createdAt) => addNode(kind, pos, { version: { kind, file, label: '历史', createdAt }, ...link }));
       return;
     }
     if (a.kind) {
@@ -620,11 +709,16 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
 
   // —— 复制 / 粘贴 / 创建副本（⌘C / ⌘V / ⌘D），复制的节点能粘到别的画布 ——
   const mouse = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+  const overlayOpen = () => Boolean(document.querySelector('.modal-mask, .lightbox'));
   const copySelected = () => {
     const sel = rf.getNodes().filter((n) => n.selected);
     if (!sel.length) return false;
     const ids = new Set(sel.map((n) => n.id));
+    // 系统剪贴板里留一个标记：之后剪贴板换成别的文字，就不再粘出这批旧节点
+    const marker = `ai-drama-studio 节点 ×${sel.length} · ${Date.now()}`;
+    navigator.clipboard?.writeText(marker).catch(() => undefined);
     const clip = {
+      marker,
       nodes: sel.map((n) => ({ id: n.id, position: n.position, data: n.data, w: n.measured?.width })),
       // 只带选中节点之间的连线
       edges: rf.getEdges().filter((e) => ids.has(e.source) && ids.has(e.target)).map((e) => ({ source: e.source, target: e.target })),
@@ -632,14 +726,16 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     localStorage.setItem('canvasClipboard', JSON.stringify(clip));
     return true;
   };
-  const pasteNodes = (at?: { x: number; y: number }) => {
-    let clip: { nodes: { id: string; position: { x: number; y: number }; data: NodeData }[]; edges: { source: string; target: string }[] };
+  /** systemText：系统剪贴板里现在的文字；和复制时留的标记对不上就不粘（说明后来复制过别的东西） */
+  const pasteNodes = (at?: { x: number; y: number }, systemText?: string) => {
+    let clip: { marker?: string; nodes: { id: string; position: { x: number; y: number }; data: NodeData }[]; edges: { source: string; target: string }[] };
     try {
       clip = JSON.parse(localStorage.getItem('canvasClipboard') || '');
     } catch {
       return false;
     }
     if (!clip?.nodes?.length) return false;
+    if (systemText && systemText !== clip.marker) return false;
     const minX = Math.min(...clip.nodes.map((n) => n.position.x));
     const minY = Math.min(...clip.nodes.map((n) => n.position.y));
     const origin = at ? rf.screenToFlowPosition(at) : { x: minX + 60, y: minY + 60 };
@@ -669,7 +765,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       }
       const el = document.activeElement as HTMLElement | null;
       if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable)) return; // 输入框里用浏览器自己的
-      if (document.querySelector('.modal-mask')) return; // 弹窗开着时不动画布
+      if (overlayOpen()) return; // 弹窗、大图预览开着时不动画布
       if (k === 'z' && !e.shiftKey) {
         e.preventDefault();
         undo();
@@ -697,7 +793,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey) || e.repeat) return;
       const el = document.activeElement as HTMLElement | null;
       if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) return;
-      if (document.querySelector('.modal-mask')) return;
+      if (overlayOpen()) return;
       submitMany(rf.getNodes().filter((n) => n.selected && KIND_CAP[n.data.kind]).map((n) => n.id));
     };
     window.addEventListener('keydown', h);
@@ -746,8 +842,8 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) return;
       const files = [...(e.clipboardData?.files || [])];
       if (!files.length) {
-        if (document.querySelector('.modal-mask')) return;
-        if (pasteRef.current(mouse.current)) e.preventDefault();
+        if (overlayOpen()) return;
+        if (pasteRef.current(mouse.current, e.clipboardData?.getData('text/plain') || '')) e.preventDefault();
         return;
       }
       e.preventDefault();
@@ -884,7 +980,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           </button>
           <button
             title="从生成历史选择"
-            onClick={() => pickFromHistory((file, kind) => addNode(kind, rf.screenToFlowPosition(centerScreen()), { version: { kind, file, label: '历史' } }))}
+            onClick={() => pickFromHistory((file, kind, createdAt) => addNode(kind, rf.screenToFlowPosition(centerScreen()), { version: { kind, file, label: '历史', createdAt } }))}
           >
             <Clock size={18} />
           </button>

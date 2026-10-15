@@ -132,9 +132,10 @@ export function CharacterLibrary({ onClose }: { onClose: () => void }) {
                 const f = e.target.files?.[0];
                 e.target.value = '';
                 if (!f) return;
+                const forId = sel?.id; // 记下是给哪个角色传的
                 try {
                   const up = await api.upload(project.id, f);
-                  setSel((s) => ({ ...(s || {}), image: up.file }));
+                  setSel((s) => (s && s.id === forId ? { ...s, image: up.file } : s));
                 } catch (err: any) {
                   toast(err.message, 'error');
                 }
@@ -148,7 +149,7 @@ export function CharacterLibrary({ onClose }: { onClose: () => void }) {
 }
 
 // —— 从生成历史选择 ——
-export function HistoryPicker({ onPick, onClose }: { onPick: (file: string, kind: 'image' | 'video' | 'audio') => void; onClose: () => void }) {
+export function HistoryPicker({ onPick, onClose }: { onPick: (file: string, kind: 'image' | 'video' | 'audio', createdAt?: string) => void; onClose: () => void }) {
   const { project, toast } = useApp();
   const [items, setItems] = useState<Awaited<ReturnType<typeof api.history>>>([]);
   const [filter, setFilter] = useState<'all' | 'image' | 'video' | 'audio'>('all');
@@ -173,7 +174,7 @@ export function HistoryPicker({ onPick, onClose }: { onPick: (file: string, kind
             className="history-item"
             title={`${h.model}\n${h.prompt}`}
             onClick={() => {
-              onPick(h.file, (fileKind(h.file) === 'other' ? 'image' : fileKind(h.file)) as any);
+              onPick(h.file, (fileKind(h.file) === 'other' ? 'image' : fileKind(h.file)) as any, h.createdAt);
               onClose();
             }}
           >

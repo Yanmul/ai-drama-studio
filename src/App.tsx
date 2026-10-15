@@ -40,7 +40,7 @@ export function App() {
   const [keepDays, setKeepDays] = useState<number>();
   const [editingName, setEditingName] = useState(false);
   const creatingEp = useRef(false);
-  const historyCb = useRef<((file: string, kind: 'image' | 'video' | 'audio') => void) | undefined>(undefined);
+  const historyCb = useRef<((file: string, kind: 'image' | 'video' | 'audio', createdAt?: string) => void) | undefined>(undefined);
 
   const toast = useCallback((msg: string, kind: 'info' | 'error' = 'info', action?: Toast['action']) => {
     const id = Date.now() + Math.random();
@@ -318,7 +318,7 @@ export function App() {
 
           {modal === 'models' && <ModelManager onClose={() => (setModal(''), refreshModels())} />}
           {modal === 'chars' && <CharacterLibrary onClose={() => setModal('')} />}
-          {modal === 'history' && <HistoryPicker onClose={() => setModal('')} onPick={(f, k) => historyCb.current?.(f, k)} />}
+          {modal === 'history' && <HistoryPicker onClose={() => setModal('')} onPick={(f, k, t) => historyCb.current?.(f, k, t)} />}
           {modal === 'project' && project && (
             <ProjectSettings
               project={project}

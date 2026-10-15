@@ -177,6 +177,7 @@ export function ComboInput({
 }) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState(false); // 打过字才按输入筛选；刚点进来时列出全部
+  const [navigated, setNavigated] = useState(false); // 用方向键挑过
   const [active, setActive] = useState(0);
   const [pos, setPos] = useState<{ left: number; top: number; width: number }>();
   const input = useRef<HTMLInputElement>(null);
@@ -231,12 +232,14 @@ export function ComboInput({
           onFocus={() => {
             onFocus?.();
             setTyped(false);
+            setNavigated(false);
             setActive(0);
             setOpen(true);
           }}
           onChange={(e) => {
             onChange(e.target.value);
             setTyped(true);
+            setNavigated(false);
             setActive(0);
             setOpen(true);
           }}
@@ -244,10 +247,14 @@ export function ComboInput({
             if (!open || !shown.length) return;
             if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
               e.preventDefault();
+              setNavigated(true);
               setActive((a) => (a + (e.key === 'ArrowDown' ? 1 : -1) + shown.length) % shown.length);
             } else if (e.key === 'Enter') {
               e.preventDefault();
-              pick(shown[active]);
+              const exact = shown.find((o) => o === value.trim());
+              if (navigated || !typed) pick(shown[active]);
+              else if (exact) pick(exact);
+              else setOpen(false); // 手打的 ID 不在列表里：保留手打的
             } else if (e.key === 'Escape' || e.key === 'Tab') setOpen(false);
           }}
         />

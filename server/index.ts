@@ -60,9 +60,11 @@ app.addHook('onRequest', async (req, reply) => {
   const originOk = !origin || LOCAL_HOSTS.has(hostnameOf(origin));
   if (LOCAL_HOSTS.has(host) && originOk) return;
   // 「参考图传法 = 给公网链接」时，厂商会从你配置的公网地址来取素材：只放行这个地址上的 GET /files/
-  if (req.method === 'GET' && req.url.startsWith('/files/') && host && (await publicHosts()).has(host)) return;
+  // 只放行参考素材（上传的、生成的、资产库），配置、任务记录、画布这些不让外网读
+  if (req.method === 'GET' && PUBLIC_FILES.test(req.url.split('?')[0]) && !req.url.includes('..') && host && (await publicHosts()).has(host)) return;
   return reply.status(403).send({ error: '只允许从本机访问' });
 });
+const PUBLIC_FILES = /^\/files\/(projects\/[^/]+\/uploads\/[^/]+|projects\/[^/]+\/episodes\/[^/]+\/assets\/[^/]+\/[^/]+\.(png|jpe?g|webp|gif|mp4|mov|webm|mp3|wav|m4a)|assets\/files\/[^/]+)$/i;
 async function publicHosts(): Promise<Set<string>> {
   const ps = await listProviderViews();
   return new Set(ps.filter((p) => p.refMode === 'public' && p.publicBaseUrl).map((p) => hostnameOf(p.publicBaseUrl!)));
@@ -150,6 +152,8 @@ app.delete('/api/projects/:pid/characters/:cid', async (req) => {
 // —— 上传素材 ——
 app.post('/api/projects/:pid/upload', async (req) => {
   const { pid } = req.params as any;
+  // 项目不存在（删掉了）就别建孤儿目录
+  if (!fs.existsSync(paths.projectFile(pid))) throw new Error('这个项目不存在了');
   const part = await (req as any).file();
   if (!part) throw new Error('没有收到文件');
   const MIME_EXT: Record<string, string> = {

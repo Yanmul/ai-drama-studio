@@ -21,7 +21,7 @@ const ICON = {
 };
 
 function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
-  const { updateNodeData } = useReactFlow();
+  const { updateNodeData, getNode } = useReactFlow();
   const { project, episode, toast, keepDays } = useApp();
   const { expandScript } = useCanvas();
   const [editingTitle, setEditingTitle] = useState(false);
@@ -41,6 +41,7 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
   }, [nodeJobs, data.dismissedError]);
 
   const setVersion = (i: number) => {
+    if (i === data.current) return; // 点的就是当前这版：什么都不改（不然会把手改的正文换回原文）
     const ver = data.versions[i];
     updateNodeData(id, { current: i, ...(ver?.text !== undefined && (data.kind === 'text' || data.kind === 'script') ? { text: ver.text } : {}) });
   };
@@ -87,15 +88,21 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
       danger: true,
     });
     if (!ok) return;
-    const versions = data.versions.filter((_, j) => j !== i);
-    const shown = data.versions[data.current];
-    const current = shown && shown.id !== ver.id ? versions.indexOf(shown) : Math.min(i, versions.length - 1);
+    // 确认框开着的时候可能来了新结果：按版本 id 在最新数据上删
+    const d = (getNode(id)?.data as NodeData | undefined) || data;
+    const at = d.versions.findIndex((x) => x.id === ver.id);
+    if (at < 0) return;
+    const versions = d.versions.filter((_, j) => j !== at);
+    const shown = d.versions[d.current];
+    const removingShown = !shown || shown.id === ver.id;
+    const current = removingShown ? Math.min(at, versions.length - 1) : versions.indexOf(shown);
     updateNodeData(id, {
       versions,
       current,
-      starred: data.starred === ver.id ? undefined : data.starred,
-      removedJobs: ver.jobId ? [...((data.removedJobs as string[] | undefined) || []), ver.jobId] : data.removedJobs,
-      ...(data.kind === 'text' && versions[current]?.text !== undefined ? { text: versions[current].text } : {}),
+      starred: d.starred === ver.id ? undefined : d.starred,
+      removedJobs: ver.jobId ? [...((d.removedJobs as string[] | undefined) || []), ver.jobId] : d.removedJobs,
+      // 只有去掉的正好是正在显示的那版，正文才换成新的当前版（不然会冲掉手改的正文）
+      ...(removingShown && (d.kind === 'text' || d.kind === 'script') && versions[current]?.text !== undefined ? { text: versions[current].text } : {}),
     });
   };
   const portrait = project?.ratio === '9:16' || project?.ratio === '3:4';

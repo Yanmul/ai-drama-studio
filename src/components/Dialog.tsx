@@ -38,20 +38,24 @@ export function promptDialog(opts: PromptOpts): Promise<string | null> {
 }
 
 export function DialogHost() {
-  const [req, setReq] = useState<Req | null>(null);
+  // 排队：同时有两个地方要确认时，一个一个来
+  const [queue, setQueue] = useState<Req[]>([]);
+  const req = queue[0] || null;
   const [text, setText] = useState('');
   const input = useRef<HTMLInputElement>(null);
   const okBtn = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    show = (r) => {
-      setText(r.kind === 'prompt' ? r.defaultValue || '' : '');
-      setReq(r);
-    };
+    show = (r) => setQueue((q) => [...q, r]);
     return () => {
       show = null;
     };
   }, []);
+
+  // 轮到哪个就用哪个的默认文字
+  useEffect(() => {
+    setText(req?.kind === 'prompt' ? req.defaultValue || '' : '');
+  }, [req]);
 
   useEffect(() => {
     if (!req) return;
@@ -66,7 +70,7 @@ export function DialogHost() {
   const close = (ok: boolean) => {
     if (req.kind === 'confirm') req.resolve(ok);
     else req.resolve(ok ? text.trim() : null);
-    setReq(null);
+    setQueue((q) => q.slice(1));
   };
   const danger = req.kind === 'confirm' && req.danger;
 
