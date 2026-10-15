@@ -58,11 +58,11 @@ export function Select<T extends string | number>({
     };
     // 页面滚动、窗口缩放时菜单跟着按钮走
     const follow = () => place();
-    document.addEventListener('mousedown', close);
+    document.addEventListener('mousedown', close, true); // 捕获阶段：点在画布上也能关
     window.addEventListener('resize', follow);
     window.addEventListener('scroll', follow, true);
     return () => {
-      document.removeEventListener('mousedown', close);
+      document.removeEventListener('mousedown', close, true);
       window.removeEventListener('resize', follow);
       window.removeEventListener('scroll', follow, true);
     };
@@ -202,11 +202,11 @@ export function ComboInput({
       if (!menu.current?.contains(t) && !input.current?.contains(t)) setOpen(false);
     };
     const follow = () => place();
-    document.addEventListener('mousedown', close);
+    document.addEventListener('mousedown', close, true); // 捕获阶段：点在画布上也能关
     window.addEventListener('resize', follow);
     window.addEventListener('scroll', follow, true);
     return () => {
-      document.removeEventListener('mousedown', close);
+      document.removeEventListener('mousedown', close, true);
       window.removeEventListener('resize', follow);
       window.removeEventListener('scroll', follow, true);
     };

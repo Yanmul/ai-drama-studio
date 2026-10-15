@@ -17,7 +17,8 @@ export interface AddMenuAction {
 
 const SCRIPT_TEMPLATE = '镜头1：\n\n镜头2：\n\n镜头3：';
 
-export function AddNodeMenu({ x, y, onPick, onClose }: { x: number; y: number; onPick: (a: AddMenuAction) => void; onClose: () => void }) {
+/** onClose 带上关菜单的那次鼠标按键（点外面关的）；按 Esc 关的没有 */
+export function AddNodeMenu({ x, y, onPick, onClose }: { x: number; y: number; onPick: (a: AddMenuAction) => void; onClose: (by?: MouseEvent) => void }) {
   const { characters, openCharacters } = useApp();
   const [q, setQ] = useState('');
   const [sub, setSub] = useState<'' | 'script' | 'library'>('');
@@ -26,13 +27,14 @@ export function AddNodeMenu({ x, y, onPick, onClose }: { x: number; y: number; o
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   useEffect(() => {
-    const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && closeRef.current();
+    const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && closeRef.current(e);
     const k = (e: KeyboardEvent) => e.key === 'Escape' && closeRef.current();
-    const timer = setTimeout(() => document.addEventListener('mousedown', h), 0);
+    // 用捕获阶段监听：画布（React Flow）按下鼠标时会拦住事件往外传，冒泡阶段收不到，点画布就关不掉菜单
+    const timer = setTimeout(() => document.addEventListener('mousedown', h, true), 0);
     document.addEventListener('keydown', k);
     return () => {
       clearTimeout(timer);
-      document.removeEventListener('mousedown', h);
+      document.removeEventListener('mousedown', h, true);
       document.removeEventListener('keydown', k);
     };
   }, []);

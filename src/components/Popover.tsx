@@ -26,11 +26,12 @@ export function Popover({
       if (ref.current && !ref.current.contains(t) && !t.closest?.('.select-menu')) closeRef.current();
     };
     const k = (e: KeyboardEvent) => e.key === 'Escape' && closeRef.current();
-    const timer = setTimeout(() => document.addEventListener('mousedown', h), 0);
+    // 捕获阶段：画布（React Flow）按下鼠标会拦住事件往外传，冒泡阶段收不到
+    const timer = setTimeout(() => document.addEventListener('mousedown', h, true), 0);
     document.addEventListener('keydown', k);
     return () => {
       clearTimeout(timer);
-      document.removeEventListener('mousedown', h);
+      document.removeEventListener('mousedown', h, true);
       document.removeEventListener('keydown', k);
     };
   }, [open]);

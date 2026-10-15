@@ -726,6 +726,12 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
 
   // —— 复制 / 粘贴 / 创建副本（⌘C / ⌘V / ⌘D），复制的节点能粘到别的画布 ——
   const mouse = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+  // 添加菜单刚被哪一下鼠标关掉：同一次右键不再弹出新菜单、同一次双击也不再打开（菜单开着时点一下 = 收起）
+  const menuClosedBy = useRef<{ at: number; button: number } | null>(null);
+  const closedBySame = (button: number) => {
+    const c = menuClosedBy.current;
+    return Boolean(c && c.button === button && Date.now() - c.at < 500);
+  };
   const overlayOpen = () => Boolean(document.querySelector('.modal-mask, .lightbox'));
   const copySelected = () => {
     const sel = rf.getNodes().filter((n) => n.selected);
@@ -876,6 +882,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
         className={`canvas-wrap ${panel ? 'panel-open' : ''}`}
         onMouseMove={(e) => (mouse.current = { x: e.clientX, y: e.clientY })}
         onDoubleClick={(e) => {
+          if (closedBySame(0)) return; // 菜单开着时双击 = 收起
           if ((e.target as HTMLElement).classList.contains('react-flow__pane')) setMenu({ x: e.clientX, y: e.clientY });
         }}
         onDragEnter={(e) => {
@@ -918,6 +925,8 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           isValidConnection={isValidConnection}
           onPaneContextMenu={(e) => {
             e.preventDefault();
+            // 菜单开着时右键 = 收起（按下鼠标那一下已经关掉了），不在新位置再弹一个
+            if (closedBySame(2)) return;
             setMenu({ x: (e as MouseEvent).clientX, y: (e as MouseEvent).clientY });
           }}
           onMoveEnd={(_, vp) => {
@@ -1085,7 +1094,17 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           </div>
         )}
 
-        {menu && <AddNodeMenu x={menu.x} y={menu.y} onPick={onPick} onClose={() => setMenu(null)} />}
+        {menu && (
+          <AddNodeMenu
+            x={menu.x}
+            y={menu.y}
+            onPick={onPick}
+            onClose={(by) => {
+              setMenu(null);
+              menuClosedBy.current = by ? { at: Date.now(), button: by.button } : null;
+            }}
+          />
+        )}
 
         <input
           ref={uploadRef}

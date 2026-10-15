@@ -73,9 +73,14 @@ export function AssetPanel({
     if (tab === 'assets') loadAssets();
   }, [tab]);
   useEffect(() => {
-    const close = () => setMenu(null);
-    window.addEventListener('mousedown', close);
-    return () => window.removeEventListener('mousedown', close);
+    // 捕获阶段：点在画布上（React Flow 会拦住事件往外传）也能关掉「…」菜单；点在菜单本身、「更多」按钮上不关
+    const close = (e: MouseEvent) => {
+      const t = e.target as Element;
+      if (t.closest?.('.ap-menu') || t.closest?.('button[title="更多"]')) return;
+      setMenu(null);
+    };
+    window.addEventListener('mousedown', close, true);
+    return () => window.removeEventListener('mousedown', close, true);
   }, []);
 
   const match = (title: string, k: NodeKind) => (kind === 'all' || k === kind) && (!q || title.toLowerCase().includes(q.toLowerCase()));
