@@ -96,10 +96,28 @@ export function App() {
   }, [route.pid, route.eid]);
 
   // 服务器推送：任务状态实时更新
+  const projectIdRef = useRef<string | undefined>(undefined);
+  projectIdRef.current = project?.id;
   useEffect(() => {
     const es = new EventSource('/api/events');
     es.onmessage = (m) => {
-      const ev = JSON.parse(m.data) as ServerEvent;
+      let ev: ServerEvent;
+      try {
+        ev = JSON.parse(m.data);
+      } catch {
+        return;
+      }
+      // 每次连上（包括后端重启、电脑睡醒后自动重连）都补拉一次：断线期间完成的任务不会推送过来
+      if (ev.type === 'hello') {
+        const pid = projectIdRef.current;
+        if (pid) {
+          api
+            .jobs(pid)
+            .then((list) => setJobs((prev) => [...list, ...prev.filter((p) => !list.some((j) => j.id === p.id))]))
+            .catch(() => undefined);
+        }
+        return;
+      }
       if (ev.type !== 'job') return;
       const j = ev.job;
       setJobs((prev) => {
