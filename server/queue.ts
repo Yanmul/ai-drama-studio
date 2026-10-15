@@ -169,20 +169,23 @@ async function start(job: Job) {
 async function pollLoop(job: Job, ctx: AdapterContext) {
   const adapter = ADAPTERS[ctx.provider.type];
   if (!adapter.poll) return fail(job, new Error('这个适配器不支持查询任务'));
-  const startAt = Date.parse(job.startedAt || nowIso());
+  // 从这一轮开始查询时起算：服务重启后接着查的任务不会因为「关机那一夜」直接判超时
+  const startAt = Date.now();
   let delay = 3000;
   let errors = 0;
   for (;;) {
     await sleep(delay);
     delay = Math.min(15000, Math.round(delay * 1.4));
     if (job.status !== 'running') return;
-    if (Date.now() - startAt > POLL_TIMEOUT_MS) return fail(job, new Error('超过 30 分钟还没出结果，按超时处理'));
     try {
       const r = await adapter.poll(ctx, job.remoteId!);
       errors = 0;
       if (job.status !== 'running') return;
       if (r.status === 'succeeded') return succeed(job, r.outputs || [], r.cost);
       if (r.status === 'failed') return fail(job, new Error(r.error || '生成失败'));
+      if (Date.now() - startAt > POLL_TIMEOUT_MS) {
+        return fail(job, new Error('查了 30 分钟还没出结果，先停止查询。厂商那边可能还在生成，可以在队列里点「重新查询」'));
+      }
       if (r.note && r.note !== job.note) {
         job.note = r.note;
         await persist(job);
