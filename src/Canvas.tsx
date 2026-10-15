@@ -662,7 +662,9 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       const r = nodeEl.getBoundingClientRect();
       const panel = document.querySelector<HTMLElement>('.panel-toolbar')?.getBoundingClientRect();
       const box = panel ? { left: Math.min(r.left, panel.left), right: Math.max(r.right, panel.right), top: Math.min(r.top, panel.top), bottom: Math.max(r.bottom, panel.bottom) } : r;
-      const area = { left: 84, right: window.innerWidth - 16, top: 64, bottom: window.innerHeight - 16 };
+      // 资产管理面板开着时，左边还要让出面板的宽度
+      const left = (document.querySelector('.canvas-wrap.panel-open') ? 312 : 0) + 84;
+      const area = { left, right: window.innerWidth - 16, top: 64, bottom: window.innerHeight - 16 };
       let dx = 0;
       let dy = 0;
       if (box.right - box.left <= area.right - area.left) {

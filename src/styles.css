@@ -2770,11 +2770,25 @@ input.short {
   padding: 0 12px 0 10px;
 }
 
-/* 面板打开时，画布上的浮动工具往右让 */
+/* 面板打开时：画布整体往右挤（React Flow 容器左边让出面板的宽度，节点、小地图跟着右移，不被盖住），
+   画布上的浮动工具也一起往右让；收起时一起滑回来 */
+.canvas-wrap > .react-flow {
+  position: absolute !important;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: auto !important;
+  height: auto !important;
+  transition: left 0.22s ease-out;
+}
+.canvas-wrap.panel-open > .react-flow {
+  left: 312px;
+}
 .left-tools,
 .history-tools,
 .bottom-bar {
-  transition: left 0.22s ease;
+  transition: left 0.22s ease-out;
 }
 .panel-open .left-tools,
 .panel-open .history-tools,
@@ -2796,10 +2810,10 @@ input.short {
   z-index: 8;
   animation: ap-in 0.22s ease-out;
 }
+/* 面板从左边整条滑进来，和画布被挤开的节奏一致 */
 @keyframes ap-in {
   from {
-    transform: translateX(-24px);
-    opacity: 0;
+    transform: translateX(-100%);
   }
 }
 .ap-tabs {
