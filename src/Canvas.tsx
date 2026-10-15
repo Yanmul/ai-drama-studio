@@ -913,6 +913,8 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           edges={displayEdges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
+          // 点画布空白处：收起资产管理侧边栏（点节点不收，方便一边看列表一边点）
+          onPaneClick={() => setPanel(null)}
           onNodeClick={(e, n) => {
             if (!e.shiftKey && !e.metaKey && n.data.kind !== 'script') revealNode(n.id);
           }}
