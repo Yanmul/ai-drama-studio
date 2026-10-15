@@ -36,6 +36,23 @@ app.setErrorHandler((err: any, _req, reply) => {
   reply.status(status).send({ error: String(err?.message || err) });
 });
 
+// 只接受本机来的请求。光监听 127.0.0.1 不够：恶意网页可以用 DNS 重绑定（Host 是它的域名）
+// 或跨站表单（Origin 是它的网站）调我们的接口，比如改掉服务商地址再点「测试」把 key 发过去。
+const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
+const hostnameOf = (s: string) => {
+  try {
+    return new URL(s).hostname;
+  } catch {
+    return '';
+  }
+};
+app.addHook('onRequest', async (req, reply) => {
+  const hostOk = LOCAL_HOSTS.has(hostnameOf(`http://${req.headers.host || ''}`));
+  const origin = req.headers.origin;
+  const originOk = !origin || LOCAL_HOSTS.has(hostnameOf(origin));
+  if (!hostOk || !originOk) return reply.status(403).send({ error: '只允许从本机访问' });
+});
+
 await ensureDir(WORKSPACE);
 await app.register(multipart, { limits: { fileSize: 500 * 1024 * 1024 } });
 await app.register(fastifyStatic, { root: WORKSPACE, prefix: '/files/', decorateReply: false });
