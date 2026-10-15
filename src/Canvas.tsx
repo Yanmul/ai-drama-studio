@@ -18,18 +18,19 @@ import {
   type Viewport,
 } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, Clock, Hand, MousePointer2, Plus, Redo2, Undo2, UsersRound } from 'lucide-react';
+import { AlertTriangle, Archive, Check, Clock, Hand, Loader2, MousePointer2, Plus, Redo2, RotateCcw, Undo2, UsersRound } from 'lucide-react';
 import type { CanvasFile, Episode, Job, NodeData, NodeKind, Project, Version } from '../shared/types';
 import { api } from './api';
 import { AddNodeMenu, type AddMenuAction } from './components/AddNodeMenu';
-import { CanvasContext, useApp, type CanvasCtx } from './context';
-import { buildRequest } from './inputs';
+import { CanvasContext, useApp, useJobs, type CanvasCtx } from './context';
+import { buildRequest, estimateCostNumber } from './inputs';
 import { pruneDeletedVersions } from '../shared/cleanup';
 import { KIND_CAP, KIND_LABEL, makeNodeData, newId, pickModel } from './lib';
 import { MediaNode } from './nodes/MediaNode';
 import { FlowEdge } from './edges/FlowEdge';
 import { SelectionBar } from './components/SelectionBar';
 import { AssetLibrary } from './components/Modals';
+import { confirmDialog } from './components/Dialog';
 
 type FlowNode = Node<NodeData>;
 const nodeTypes = { media: MediaNode };
@@ -63,7 +64,8 @@ function applyJobs(nodes: FlowNode[], jobs: Job[], episodeId: string): FlowNode[
 
 export function Canvas({ project, episode }: { project: Project; episode: Episode }) {
   const app = useApp();
-  const { models, jobs, toast, pickFromHistory } = app;
+  const { models, toast, pickFromHistory } = app;
+  const jobs = useJobs();
   const rf = useReactFlow<FlowNode, Edge>();
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -83,27 +85,60 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
   const restoring = useRef(false);
   const snapTimer = useRef<number | undefined>(undefined);
   const [, bumpHistory] = useState(0);
+  // 快照里不比较「版本」相关字段：生成结果到达、切换版本都不算一步，撤销也不会把刚出的结果撤掉
   const snapshot = () =>
     JSON.stringify({
       nodes: rf.getNodes().map((n) => ({ id: n.id, position: n.position, data: n.data })),
       edges: rf.getEdges().map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle })),
     });
+  const VOLATILE = ['versions', 'current', 'removedJobs', 'run', 'dismissedError'] as const;
+  // 文本节点的正文是生成结果写进去的（等于当前那一版生成的文字）：也不算用户改的
+  const textFromJob = (d: any) => {
+    const cur = d?.versions?.[d.current];
+    return Boolean(cur?.jobId && cur.text !== undefined && cur.text === d.text);
+  };
+  const stable = (s: string) => {
+    const v = JSON.parse(s);
+    for (const n of v.nodes) {
+      const d = n.data;
+      if (textFromJob(d)) delete d.text;
+      for (const k of VOLATILE) delete d[k];
+    }
+    return JSON.stringify(v);
+  };
+  const lastStable = useRef('');
   const commitSnapshot = () => {
     const s = snapshot();
-    if (s === lastSnap.current) return;
+    const key = stable(s);
+    if (key === lastStable.current) {
+      lastSnap.current = s; // 只是版本变了：更新当前快照，不新增一步
+      return;
+    }
     if (lastSnap.current) past.current.push(lastSnap.current);
     if (past.current.length > 100) past.current.shift();
     future.current = [];
     lastSnap.current = s;
+    lastStable.current = key;
     bumpHistory((x) => x + 1);
   };
   const applySnapshot = (s: string) => {
     const v = JSON.parse(s);
     restoring.current = true;
     window.clearTimeout(snapTimer.current);
-    setNodes(v.nodes.map((n: any) => ({ ...n, type: 'media' })));
+    // 还在画布上的节点保留它现在的版本（撤销只回退内容和布局）；被删又撤回的节点用快照里的版本
+    const live = new Map(rf.getNodes().map((n) => [n.id, n.data]));
+    setNodes(
+      v.nodes.map((n: any) => {
+        const cur = live.get(n.id);
+        if (!cur) return { ...n, type: 'media' };
+        const keep: Record<string, unknown> = Object.fromEntries(VOLATILE.map((k) => [k, cur[k]]));
+        if (textFromJob(cur)) keep.text = cur.text;
+        return { ...n, type: 'media', data: { ...n.data, ...keep } };
+      }),
+    );
     setEdges(v.edges);
     lastSnap.current = s;
+    lastStable.current = stable(s);
     bumpHistory((x) => x + 1);
   };
   const undo = useCallback(() => {
@@ -129,8 +164,12 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     if (id) setHoverEdge(id);
     else hoverTimer.current = window.setTimeout(() => setHoverEdge(null), 250);
   }, []);
+  const selKey = nodes
+    .filter((n) => n.selected)
+    .map((n) => n.id)
+    .join(',');
   const displayEdges = useMemo(() => {
-    const selNodes = new Set(nodes.filter((n) => n.selected).map((n) => n.id));
+    const selNodes = new Set(selKey ? selKey.split(',') : []);
     // 框选了多个节点时，框里的线也会被选中；这时不当成「选中了一条线」
     const multi = selNodes.size > 1;
     const selEdges = multi ? [] : edges.filter((e) => e.selected);
@@ -157,19 +196,30 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
         flow: chain.has(e.id) ? 'chain' : selNodes.has(e.source) || selNodes.has(e.target) ? 'node' : undefined,
       },
     }));
-  }, [edges, nodes, hoverEdge]);
+  }, [edges, selKey, hoverEdge]);
 
   const jobsRef = useRef(jobs);
   jobsRef.current = jobs;
 
   // —— 读画布 ——
+  const [loadError, setLoadError] = useState('');
+  const [reloadTick, setReloadTick] = useState(0);
+  const savedAt = useRef<string | undefined>(undefined);
   useEffect(() => {
     let alive = true;
     setLoaded(false);
+    setLoadError('');
     api
       .canvas(project.id, episode.id)
       .then((c) => {
         if (!alive) return;
+        if (c.corrupt) {
+          // 不加载这张空画布：加载了自动保存就会把空的写回去
+          setLoadError('画布文件内容坏了。坏掉的文件已经另存（canvas.json.corrupt-…），可以从自动留的历史版本恢复。');
+          return;
+        }
+        savedAt.current = c.savedAt;
+        lastSavedKey.current = keyOf({ nodes: (c.nodes || []).map((n) => ({ id: n.id, type: 'media', position: n.position, data: n.data })), edges: (c.edges || []).map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle })), viewport: c.viewport });
         const ns = applyJobs((c.nodes || []).map((n) => ({ ...n, type: 'media' })) as FlowNode[], jobsRef.current, episode.id);
         setNodes(ns);
         setEdges((c.edges || []) as Edge[]);
@@ -179,13 +229,27 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
         past.current = [];
         future.current = [];
         lastSnap.current = '';
+        lastStable.current = '';
+        setSaveState('saved');
         setLoaded(true);
+        // 从队列面板「定位」过来的：加载完把那个节点放到屏幕中间并选中
+        const focus = sessionStorage.getItem('focusNode');
+        if (focus?.startsWith(`${episode.id}/`)) {
+          sessionStorage.removeItem('focusNode');
+          const fid = focus.slice(episode.id.length + 1);
+          setTimeout(() => {
+            const n = rf.getNode(fid);
+            if (!n) return toast('对应的节点已经删掉了');
+            rf.setNodes((all) => all.map((x) => ({ ...x, selected: x.id === fid })));
+            rf.setCenter(n.position.x + 170, n.position.y + 150, { zoom: 0.9, duration: 400 });
+          }, 120);
+        }
       })
-      .catch((e) => toast(`读取画布失败：${e.message}`, 'error'));
+      .catch((e) => alive && setLoadError(e.message));
     return () => {
       alive = false;
     };
-  }, [project.id, episode.id]);
+  }, [project.id, episode.id, reloadTick]);
 
   // —— 新结果进来，放进节点 ——
   useEffect(() => {
@@ -215,24 +279,79 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
   const edgesRef = useRef(edges);
   edgesRef.current = edges;
   const dirty = useRef(false);
+  const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving' | 'error'>('saved');
+  const inFlight = useRef(false);
+  const again = useRef(false); // 保存途中又改了：这次存完再存一次
+  const conflictOpen = useRef(false);
+  // 上次存下（或刚读进来）的内容：内容没变就不发保存请求。
+  // 不然打开画布时节点量尺寸、套用生成结果都会触发一次「保存」，两个标签页开着同一集时会互相顶掉
+  const lastSavedKey = useRef('');
+  const keyOf = (c: CanvasFile) => JSON.stringify([c.nodes, c.edges, c.viewport]);
+  const bodyNow = (): CanvasFile => ({
+    nodes: nodesRef.current.map((n) => ({ id: n.id, type: 'media', position: n.position, data: n.data })),
+    edges: edgesRef.current.map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle })),
+    viewport: viewport.current,
+  });
   /** 存盘；返回请求体是否小到能用 keepalive（关页面时也能发完） */
   const save = useCallback(
-    (keepalive = false): boolean => {
+    (keepalive = false, force = false): boolean => {
       window.clearTimeout(saveTimer.current);
       dirty.current = false;
-      const body: CanvasFile = {
-        nodes: nodesRef.current.map((n) => ({ id: n.id, type: 'media', position: n.position, data: n.data })),
-        edges: edgesRef.current.map((e) => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle, targetHandle: e.targetHandle })),
-        viewport: viewport.current,
-      };
+      const body: CanvasFile = { ...bodyNow(), baseSavedAt: force ? undefined : savedAt.current };
       const small = JSON.stringify(body).length < 60_000;
-      api.saveCanvas(project.id, episode.id, body, keepalive && small).catch((e) => toast(`保存失败：${e.message}`, 'error'));
+      const key = keyOf(body);
+      if (!force && key === lastSavedKey.current) {
+        if (!inFlight.current) setSaveState('saved');
+        return true;
+      }
+      // 关页面时等不了排队，直接发
+      if (inFlight.current && !keepalive) {
+        again.current = true;
+        return small;
+      }
+      inFlight.current = true;
+      setSaveState('saving');
+      api
+        .saveCanvas(project.id, episode.id, body, keepalive && small)
+        .then((r) => {
+          if (r?.savedAt) savedAt.current = r.savedAt;
+          lastSavedKey.current = key;
+          setSaveState(dirty.current ? 'dirty' : 'saved');
+        })
+        .catch(async (e: any) => {
+          if (e.conflict) {
+            // 别的窗口改过这一集：问用户留哪边
+            setSaveState('error');
+            if (conflictOpen.current) return;
+            conflictOpen.current = true;
+            const overwrite = await confirmDialog({
+              title: '这一集在别的窗口里改过了',
+              message: '可能同时开了两个标签页。\n「用这里的覆盖」会保存当前页面的内容；「重新加载」会丢掉这里没保存的改动，换成另一个窗口保存的版本。',
+              okText: '用这里的覆盖',
+              cancelText: '重新加载',
+            });
+            conflictOpen.current = false;
+            if (overwrite) saveRef.current(false, true);
+            else setReloadTick((t) => t + 1);
+            return;
+          }
+          setSaveState('error');
+          toast(`保存失败：${e.message}`, 'error', { label: '重试', onClick: () => saveRef.current() });
+        })
+        .finally(() => {
+          inFlight.current = false;
+          if (again.current) {
+            again.current = false;
+            saveRef.current();
+          }
+        });
       return small;
     },
     [project.id, episode.id],
   );
   const scheduleSave = () => {
     dirty.current = true;
+    setSaveState((st) => (st === 'saving' ? st : 'dirty'));
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => save(), 800);
   };
@@ -303,14 +422,26 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     [project.id, addNode],
   );
 
+  const activeOf = (nodeId: string) =>
+    jobsRef.current.filter((j) => j.request.nodeId === nodeId && j.request.episodeId === episode.id && (j.status === 'queued' || j.status === 'running')).length;
+
   const submit = useCallback(
-    async (nodeId: string) => {
+    async (nodeId: string, opts: { skipBusyCheck?: boolean; quiet?: boolean } = {}) => {
       const n = rf.getNode(nodeId) as FlowNode | undefined;
       if (!n) return;
       const cap = KIND_CAP[n.data.kind];
       if (!cap) return;
       const model = models.find((m) => m.id === n.data.gen.modelId) || pickModel(models, cap);
       if (!model) return toast(`还没有可用的${KIND_LABEL[n.data.kind]}模型`, 'error');
+      const running = activeOf(nodeId);
+      if (running && !opts.skipBusyCheck) {
+        const ok = await confirmDialog({
+          title: `「${n.data.title}」已经有 ${running} 个在生成`,
+          message: '再点会再提交一个新任务，会再扣一次费用。确定要再生成一个吗？',
+          okText: '再生成一个',
+        });
+        if (!ok) return;
+      }
       const sources = rf
         .getEdges()
         .filter((e) => e.target === nodeId)
@@ -322,12 +453,45 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       try {
         const created = await api.generate(req);
         app.setJobs((prev) => [...created, ...prev.filter((p) => !created.some((c) => c.id === p.id))]);
-        toast(created.length > 1 ? `已提交 ${created.length} 个任务` : '已提交，生成好了会自动出现在节点里');
+        if (!opts.quiet) toast(created.length > 1 ? `已提交 ${created.length} 个任务` : '已提交，生成好了会自动出现在节点里');
       } catch (e: any) {
         toast(e.message, 'error');
       }
     },
     [models, project.id, episode.id],
+  );
+
+  /** 一次生成多个节点：超过 1 个先确认数量和预估花费 */
+  const submitMany = useCallback(
+    async (ids: string[]) => {
+      if (!ids.length) return;
+      if (ids.length === 1) return submit(ids[0]);
+      let total = 0;
+      let unknown = 0;
+      for (const id of ids) {
+        const n = rf.getNode(id) as FlowNode | undefined;
+        const cap = n && KIND_CAP[n.data.kind];
+        const m = cap ? models.find((x) => x.id === n!.data.gen.modelId) || pickModel(models, cap) : undefined;
+        const c = m ? estimateCostNumber(m, { ...n!.data.gen.params }) : undefined;
+        if (c === undefined) unknown += 1;
+        else total += c;
+      }
+      const busy = ids.filter((id) => activeOf(id) > 0).length;
+      const ok = await confirmDialog({
+        title: `一次生成 ${ids.length} 个节点？`,
+        message: [
+          `预估花费 ¥${total.toFixed(2)}${unknown ? `（另有 ${unknown} 个模型没填单价，没算进去）` : ''}`,
+          busy ? `其中 ${busy} 个节点已经有任务在生成，会再各提交一个。` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        okText: `生成 ${ids.length} 个`,
+      });
+      if (!ok) return;
+      for (const id of ids) await submit(id, { skipBusyCheck: true, quiet: true });
+      toast(`已提交 ${ids.length} 个节点，生成好了会自动出现在各自节点里`);
+    },
+    [submit, models],
   );
 
   const expandScript = useCallback(
@@ -372,9 +536,35 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
   const openAddMenu: CanvasCtx['openAddMenu'] = useCallback((screen, opts) => setMenu({ ...screen, ...opts }), []);
 
   const ctx: CanvasCtx = useMemo(
-    () => ({ addNode, uploadAsNode, submit, toFlow: (p) => rf.screenToFlowPosition(p), openAddMenu, expandScript }),
-    [addNode, uploadAsNode, submit, openAddMenu, expandScript],
+    () => ({ addNode, uploadAsNode, submit, submitMany, toFlow: (p) => rf.screenToFlowPosition(p), openAddMenu, expandScript }),
+    [addNode, uploadAsNode, submit, submitMany, openAddMenu, expandScript],
   );
+
+  // —— 选中节点时，让节点和下面的生成面板整个露出来（不被屏幕边、左侧工具栏、小地图挡住） ——
+  const revealNode = useCallback((id: string) => {
+    // 等面板渲染出来再量
+    setTimeout(() => {
+      const nodeEl = document.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(id)}"]`);
+      if (!nodeEl) return;
+      const r = nodeEl.getBoundingClientRect();
+      const panel = document.querySelector<HTMLElement>('.panel-toolbar')?.getBoundingClientRect();
+      const box = panel ? { left: Math.min(r.left, panel.left), right: Math.max(r.right, panel.right), top: Math.min(r.top, panel.top), bottom: Math.max(r.bottom, panel.bottom) } : r;
+      const area = { left: 84, right: window.innerWidth - 16, top: 64, bottom: window.innerHeight - 16 };
+      let dx = 0;
+      let dy = 0;
+      if (box.right - box.left <= area.right - area.left) {
+        if (box.left < area.left) dx = area.left - box.left;
+        else if (box.right > area.right) dx = area.right - box.right;
+      }
+      // 太高放不下时，优先保证面板底部（模型、生成按钮）露出来
+      if (box.bottom > area.bottom) dy = area.bottom - box.bottom;
+      else if (box.top < area.top) dy = area.top - box.top;
+      if (box.bottom - box.top > area.bottom - area.top) dy = area.bottom - box.bottom;
+      if (!dx && !dy) return;
+      const vp = rf.getViewport();
+      rf.setViewport({ x: vp.x + dx, y: vp.y + dy, zoom: vp.zoom }, { duration: 260 });
+    }, 60);
+  }, []);
 
   // —— 菜单选中 ——
   const onPick = (a: AddMenuAction) => {
@@ -421,33 +611,87 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     return !rf.getEdges().some((e) => e.source === c.source && e.target === c.target);
   }, []);
 
+  // —— 复制 / 粘贴 / 创建副本（⌘C / ⌘V / ⌘D），复制的节点能粘到别的画布 ——
+  const mouse = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+  const copySelected = () => {
+    const sel = rf.getNodes().filter((n) => n.selected);
+    if (!sel.length) return false;
+    const ids = new Set(sel.map((n) => n.id));
+    const clip = {
+      nodes: sel.map((n) => ({ id: n.id, position: n.position, data: n.data, w: n.measured?.width })),
+      // 只带选中节点之间的连线
+      edges: rf.getEdges().filter((e) => ids.has(e.source) && ids.has(e.target)).map((e) => ({ source: e.source, target: e.target })),
+    };
+    localStorage.setItem('canvasClipboard', JSON.stringify(clip));
+    return true;
+  };
+  const pasteNodes = (at?: { x: number; y: number }) => {
+    let clip: { nodes: { id: string; position: { x: number; y: number }; data: NodeData }[]; edges: { source: string; target: string }[] };
+    try {
+      clip = JSON.parse(localStorage.getItem('canvasClipboard') || '');
+    } catch {
+      return false;
+    }
+    if (!clip?.nodes?.length) return false;
+    const minX = Math.min(...clip.nodes.map((n) => n.position.x));
+    const minY = Math.min(...clip.nodes.map((n) => n.position.y));
+    const origin = at ? rf.screenToFlowPosition(at) : { x: minX + 60, y: minY + 60 };
+    const map = new Map(clip.nodes.map((n) => [n.id, newId()]));
+    const copies: FlowNode[] = clip.nodes.map((n) => {
+      const data = structuredClone(n.data) as NodeData;
+      delete data.run;
+      return { id: map.get(n.id)!, type: 'media', position: { x: origin.x + n.position.x - minX, y: origin.y + n.position.y - minY }, data, selected: true };
+    });
+    rf.setNodes((ns) => [...ns.map((n) => (n.selected ? { ...n, selected: false } : n)), ...copies]);
+    rf.setEdges((es) => [...es, ...clip.edges.map((e) => ({ id: newId('e_'), source: map.get(e.source)!, target: map.get(e.target)! }))]);
+    toast(`已粘贴 ${copies.length} 个节点`, 'info', { label: '撤销', onClick: undo });
+    return true;
+  };
+  const pasteRef = useRef(pasteNodes);
+  pasteRef.current = pasteNodes;
+
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
-      const el = document.activeElement as HTMLElement | null;
-      if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) return; // 输入框里用浏览器自己的撤销
       const k = e.key.toLowerCase();
+      // ⌘S：哪里都能用，立刻保存
+      if (k === 's') {
+        e.preventDefault();
+        saveRef.current();
+        return;
+      }
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable)) return; // 输入框里用浏览器自己的
+      if (document.querySelector('.modal-mask')) return; // 弹窗开着时不动画布
       if (k === 'z' && !e.shiftKey) {
         e.preventDefault();
         undo();
       } else if ((k === 'z' && e.shiftKey) || k === 'y') {
         e.preventDefault();
         redo();
+      } else if (k === 'a') {
+        e.preventDefault();
+        rf.setNodes((ns) => ns.map((n) => ({ ...n, selected: true })));
+      } else if (k === 'c') {
+        if (window.getSelection()?.toString()) return; // 选中了文字就复制文字
+        if (copySelected()) e.preventDefault();
+      } else if (k === 'd') {
+        e.preventDefault();
+        if (copySelected()) pasteRef.current();
       }
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, []);
 
-  // ⌘/Ctrl + 回车：生成选中的节点
+  // ⌘/Ctrl + 回车：生成选中的节点（按住不放不会连发）
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey)) return;
+      if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey) || e.repeat) return;
       const el = document.activeElement as HTMLElement | null;
       if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) return;
-      rf.getNodes()
-        .filter((n) => n.selected && KIND_CAP[n.data.kind])
-        .forEach((n) => submit(n.id));
+      if (document.querySelector('.modal-mask')) return;
+      submitMany(rf.getNodes().filter((n) => n.selected && KIND_CAP[n.data.kind]).map((n) => n.id));
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
@@ -492,7 +736,11 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       const el = document.activeElement as HTMLElement | null;
       if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) return;
       const files = [...(e.clipboardData?.files || [])];
-      if (!files.length) return;
+      if (!files.length) {
+        if (document.querySelector('.modal-mask')) return;
+        if (pasteRef.current(mouse.current)) e.preventDefault();
+        return;
+      }
       e.preventDefault();
       placeFiles(files, centerScreen());
     };
@@ -504,6 +752,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     <CanvasContext.Provider value={ctx}>
       <div
         className="canvas-wrap"
+        onMouseMove={(e) => (mouse.current = { x: e.clientX, y: e.clientY })}
         onDoubleClick={(e) => {
           if ((e.target as HTMLElement).classList.contains('react-flow__pane')) setMenu({ x: e.clientX, y: e.clientY });
         }}
@@ -535,6 +784,9 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           edges={displayEdges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
+          onNodeClick={(e, n) => {
+            if (!e.shiftKey && !e.metaKey && n.data.kind !== 'script') revealNode(n.id);
+          }}
           onEdgeMouseEnter={(_, e) => onEdgeHover(e.id)}
           onEdgeMouseLeave={() => onEdgeHover(null)}
           onNodesChange={onNodesChange}
@@ -590,6 +842,29 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           <button className={tool === 'hand' ? 'on' : ''} title="抓手（H）：左键拖动平移画布" onClick={() => setTool('hand')}>
             <Hand size={16} />
           </button>
+          <span className="tool-sep" />
+          <span
+            className={`save-state ${saveState}`}
+            title={saveState === 'error' ? '保存失败，点一下重试（⌘S）' : '改动会自动保存；⌘S 立即保存'}
+            onClick={() => saveState === 'error' && save()}
+          >
+            {saveState === 'saved' && (
+              <>
+                <Check size={13} /> 已保存
+              </>
+            )}
+            {saveState === 'dirty' && '未保存'}
+            {saveState === 'saving' && (
+              <>
+                <Loader2 size={13} className="spin" /> 保存中
+              </>
+            )}
+            {saveState === 'error' && (
+              <>
+                <AlertTriangle size={13} /> 保存失败
+              </>
+            )}
+          </span>
         </div>
 
         <div className="left-tools">
@@ -619,6 +894,20 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
               else addNode(a.kind, pos, { title: a.name, text: a.text });
             }}
           />
+        )}
+
+        {loadError && (
+          <div className="load-error">
+            <AlertTriangle size={22} />
+            <div className="le-title">这一集的画布读不出来</div>
+            <div className="le-msg">{loadError}</div>
+            <div className="le-actions">
+              <button className="primary" onClick={() => setReloadTick((t) => t + 1)}>
+                <RotateCcw size={14} /> 重试
+              </button>
+              <BackupRestore projectId={project.id} episodeId={episode.id} onRestored={() => setReloadTick((t) => t + 1)} />
+            </div>
+          </div>
         )}
 
         {loaded && nodes.length === 0 && (
@@ -666,5 +955,49 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
         />
       </div>
     </CanvasContext.Provider>
+  );
+}
+
+/** 画布读不出来时：列出自动留的历史版本（.bak），挑一个恢复 */
+function BackupRestore({ projectId, episodeId, onRestored }: { projectId: string; episodeId: string; onRestored: () => void }) {
+  const [list, setList] = useState<{ name: string; savedAt?: string; nodeCount: number }[] | null>(null);
+  const [err, setErr] = useState('');
+  const load = () =>
+    api
+      .canvasBackups(projectId, episodeId)
+      .then(setList)
+      .catch((e) => setErr(e.message));
+  if (!list)
+    return (
+      <>
+        <button className="ghost" onClick={load}>
+          <Clock size={14} /> 从历史版本恢复
+        </button>
+        {err && <div className="le-msg">{err}</div>}
+      </>
+    );
+  if (!list.length) return <div className="le-msg">没有可以恢复的历史版本</div>;
+  return (
+    <div className="le-backups">
+      {list.map((b) => (
+        <button
+          key={b.name}
+          className="ghost"
+          onClick={async () => {
+            const ok = await confirmDialog({ title: '用这个历史版本恢复？', message: `${b.savedAt ? new Date(b.savedAt).toLocaleString() : b.name} · ${b.nodeCount} 个节点\n现在这份读不出来的画布会先另存一份，不会丢。`, okText: '恢复' });
+            if (!ok) return;
+            try {
+              await api.restoreBackup(projectId, episodeId, b.name);
+              onRestored();
+            } catch (e: any) {
+              setErr(e.message);
+            }
+          }}
+        >
+          {b.savedAt ? new Date(b.savedAt).toLocaleString() : b.name} · {b.nodeCount} 个节点
+        </button>
+      ))}
+      {err && <div className="le-msg">{err}</div>}
+    </div>
   );
 }

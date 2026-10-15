@@ -5,7 +5,7 @@ import type { Character, Episode, Job, ModelInfo, Project, ServerEvent } from '.
 import { api } from './api';
 import { Canvas } from './Canvas';
 import { Home } from './Home';
-import { AppContext, type AppCtx } from './context';
+import { AppContext, JobsContext, jobStore, type AppCtx } from './context';
 import { CharacterLibrary, HistoryPicker, ProjectSettings } from './components/Modals';
 import { ModelManager } from './components/ModelManager';
 import { QueuePanel } from './components/QueuePanel';
@@ -37,7 +37,9 @@ export function App() {
   const [modal, setModal] = useState<'' | 'models' | 'chars' | 'history' | 'project'>('');
   const [showQueue, setShowQueue] = useState(false);
   const [cleanup, setCleanup] = useState<AppCtx['cleanup']>();
+  const [keepDays, setKeepDays] = useState<number>();
   const [editingName, setEditingName] = useState(false);
+  const creatingEp = useRef(false);
   const historyCb = useRef<((file: string, kind: 'image' | 'video' | 'audio') => void) | undefined>(undefined);
 
   const toast = useCallback((msg: string, kind: 'info' | 'error' = 'info', action?: Toast['action']) => {
@@ -51,8 +53,22 @@ export function App() {
   }, []);
 
   const refreshCharacters = useCallback(() => {
-    if (project) api.characters(project.id).then(setCharacters);
+    if (project) api.characters(project.id).then(setCharacters).catch((e) => toast(e.message, 'error'));
   }, [project?.id]);
+
+  // 失败提示合并：一小段时间内失败的任务攒成一条，免得中转站一挂满屏红字
+  const failBatch = useRef<{ errors: string[]; timer?: number }>({ errors: [] });
+  const noteFailure = (err: string) => {
+    const b = failBatch.current;
+    b.errors.push(err);
+    window.clearTimeout(b.timer);
+    b.timer = window.setTimeout(() => {
+      const errs = b.errors;
+      b.errors = [];
+      if (errs.length === 1) toast(`生成失败：${errs[0]}`, 'error', { label: '查看队列', onClick: () => setShowQueue(true) });
+      else toast(`${errs.length} 个任务失败：${errs[errs.length - 1]}`, 'error', { label: '查看队列', onClick: () => setShowQueue(true) });
+    }, 1200);
+  };
 
   const go = (pid?: string, eid?: string) => {
     location.hash = pid ? `#/c/${encodeURIComponent(pid)}${eid ? `/${encodeURIComponent(eid)}` : ''}` : '#/';
@@ -60,6 +76,7 @@ export function App() {
 
   useEffect(() => {
     refreshModels();
+    api.cleanupStatus().then((s) => setKeepDays(s.keepDays)).catch(() => undefined);
     const h = () => setRoute(parseHash());
     window.addEventListener('hashchange', h);
     return () => window.removeEventListener('hashchange', h);
@@ -87,8 +104,8 @@ export function App() {
         setProject(p);
         setEpisodes(es);
         setEpisode(es.find((e) => e.id === route.eid) || es[0]);
-        api.characters(p.id).then(setCharacters);
-        api.jobs(p.id).then(setJobs);
+        api.characters(p.id).then(setCharacters).catch((e) => toast(`读取角色库失败：${e.message}`, 'error'));
+        api.jobs(p.id).then(setJobs).catch((e) => toast(`读取生成记录失败：${e.message}`, 'error'));
       } catch (e: any) {
         toast(e.message, 'error');
       }
@@ -137,7 +154,7 @@ export function App() {
         next[i] = j;
         return next;
       });
-      if (j.status === 'failed') toast(`生成失败：${j.error}`, 'error');
+      if (j.status === 'failed') noteFailure(j.error || '未知错误');
     };
     return () => es.close();
   }, []);
@@ -145,35 +162,57 @@ export function App() {
   const projectJobs = useMemo(() => jobs.filter((j) => j.request.projectId === project?.id), [jobs, project?.id]);
   const activeCount = projectJobs.filter((j) => j.status === 'queued' || j.status === 'running').length;
 
-  const ctx: AppCtx = {
-    project,
-    episode,
-    models,
-    characters,
-    jobs: projectJobs,
-    setJobs,
-    toast,
-    refreshModels,
-    refreshCharacters,
-    cleanup,
-    openCharacters: () => setModal('chars'),
-    openModels: () => setModal('models'),
-    pickFromHistory: (cb) => {
-      historyCb.current = cb;
-      setModal('history');
+  // 节点按自己的 id 从这里订阅任务（见 context.ts 的 jobStore）
+  useEffect(() => jobStore.set(projectJobs), [projectJobs]);
+
+  // 打开另一集并在那里定位到某个节点（队列面板「定位」用）
+  const openEpisode = useCallback(
+    (eid: string, focusNodeId?: string) => {
+      if (!project) return;
+      if (focusNodeId) sessionStorage.setItem('focusNode', `${eid}/${focusNodeId}`);
+      go(project.id, eid);
     },
-  };
+    [project?.id],
+  );
+
+  const ctx: AppCtx = useMemo(
+    () => ({
+      project,
+      episode,
+      models,
+      characters,
+      setJobs,
+      toast,
+      refreshModels,
+      refreshCharacters,
+      cleanup,
+      keepDays,
+      openEpisode,
+      openCharacters: () => setModal('chars'),
+      openModels: () => setModal('models'),
+      pickFromHistory: (cb) => {
+        historyCb.current = cb;
+        setModal('history');
+      },
+    }),
+    [project, episode, models, characters, toast, refreshModels, refreshCharacters, cleanup, keepDays, openEpisode],
+  );
 
   const renameProject = async (name: string) => {
     if (!project || !name.trim() || name === project.name) return;
-    const p = await api.updateProject(project.id, { name: name.trim() });
-    setProject(p);
+    try {
+      const p = await api.updateProject(project.id, { name: name.trim() });
+      setProject(p);
+    } catch (e: any) {
+      toast(e.message, 'error');
+    }
   };
 
   const inCanvas = Boolean(route.pid);
 
   return (
     <AppContext.Provider value={ctx}>
+      <JobsContext.Provider value={projectJobs}>
       <ReactFlowProvider>
         <div className="app">
           {!inCanvas && <Home onOpen={(pid, eid) => go(pid, eid)} onOpenModels={() => setModal('models')} toast={toast} />}
@@ -211,12 +250,16 @@ export function App() {
                   onChange={async (v) => {
                     if (!project) return;
                     if (v === '__new') {
+                      if (creatingEp.current) return;
+                      creatingEp.current = true;
                       try {
                         const ep = await api.createEpisode(project.id);
                         setEpisodes((es) => [...es, ep]);
                         go(project.id, ep.id);
                       } catch (e: any) {
                         toast(e.message, 'error');
+                      } finally {
+                        creatingEp.current = false;
                       }
                       return;
                     }
@@ -309,6 +352,7 @@ export function App() {
           </div>
         </div>
       </ReactFlowProvider>
+      </JobsContext.Provider>
     </AppContext.Provider>
   );
 }

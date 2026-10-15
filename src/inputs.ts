@@ -1,6 +1,6 @@
 // 从连进来的节点算出「参考素材」和「输入文本」，面板显示和提交生成共用这一份逻辑。
 import type { GenerateRequest, ModeDef, ModelInfo, NodeData, RefRole } from '../shared/types';
-import { activeVersion, fileKind } from './lib';
+import { activeVersion, defaultParams, fileKind } from './lib';
 
 export interface MediaInput {
   nodeId: string;
@@ -108,12 +108,19 @@ export function buildRequest(
   };
 }
 
-export function estimateCost(model: ModelInfo | undefined, params: Record<string, unknown>): string {
+/** 预估花费（元）；模型没填单价返回 undefined */
+export function estimateCostNumber(model: ModelInfo | undefined, raw: Record<string, unknown>): number | undefined {
   const pr = model?.price;
-  if (!pr) return '—';
+  if (!pr) return undefined;
+  const params = { ...defaultParams(model), ...raw };
   let n = pr.amount;
   if (pr.unit === 'per_second') n = pr.amount * (Number(params.duration) || 5) * (model?.capability === 'video' ? Number(params.count) || 1 : 1);
   if (pr.unit === 'per_image') n = pr.amount * (Number(params.count) || 1);
   if (pr.unit === 'per_call' && model?.capability === 'video') n = pr.amount * (Number(params.count) || 1);
-  return `¥${n.toFixed(2)}`;
+  return n;
+}
+
+export function estimateCost(model: ModelInfo | undefined, params: Record<string, unknown>): string {
+  const n = estimateCostNumber(model, params);
+  return n === undefined ? '—' : `¥${n.toFixed(2)}`;
 }

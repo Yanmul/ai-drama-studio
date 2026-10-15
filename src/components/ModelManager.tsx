@@ -1,5 +1,5 @@
 // 模型管理：总览已配置的模型；添加服务商（火山引擎 / 中转站）、填 key、测试、管理每个服务商下的模型
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { CheckCircle2, ChevronDown, CloudDownload, FlaskConical, LayoutList, Loader2, Plus, Trash2, X, XCircle } from 'lucide-react';
 import { confirmDialog } from './Dialog';
 import { Popover } from './Popover';
@@ -113,21 +113,49 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
   // 每个模型「试一下」的结果，按模型 id
   const [modelTests, setModelTests] = useState<Record<string, { ok?: boolean; message: string; loading?: boolean }>>({});
 
+  // —— 没保存的修改：切走 / 关掉前先问一声 ——
+  const savedSnap = useRef('');
+  const setClean = (d: Draft | null) => {
+    setDraft(d);
+    savedSnap.current = d ? JSON.stringify(d) : '';
+  };
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const leave = async (then: () => void) => {
+    const d = draftRef.current;
+    if (d && JSON.stringify(d) !== savedSnap.current) {
+      const ok = await confirmDialog({
+        title: '放弃没保存的修改？',
+        message: `「${d.name || '这个服务商'}」有改动还没保存（比如 key、模型）。`,
+        okText: '放弃修改',
+        cancelText: '继续编辑',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    then();
+  };
+  const [testing, setTesting] = useState(false);
+
   const load = async (selectId?: string) => {
-    const ps = await api.providers();
-    setProviders(ps);
-    const sel = selectId ? ps.find((p) => p.id === selectId) : undefined;
-    if (sel) setDraft(toDraft(sel));
+    try {
+      const ps = await api.providers();
+      setProviders(ps);
+      const sel = selectId ? ps.find((p) => p.id === selectId) : undefined;
+      if (sel) setClean(toDraft(sel));
+    } catch (e: any) {
+      toast(`读取服务商失败：${e.message}`, 'error');
+    }
   };
 
   useEffect(() => {
     load();
-    api.presets().then(setPresets);
+    api.presets().then(setPresets).catch((e) => toast(`读取参数预设失败：${e.message}`, 'error'));
   }, []);
 
   const add = (type: ProviderType, quick?: (typeof QUICK_ADD)[number]) => {
     setPull(null);
-    setDraft({
+    setClean({
       id: null,
       name: quick?.name || (type === 'relay' ? '新中转站' : '火山引擎'),
       type,
@@ -184,11 +212,19 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
   };
 
   const test = async () => {
-    const saved = await save();
-    if (!saved) return;
-    const r = await api.testProvider(saved.id);
-    toast(r.message, r.ok ? 'info' : 'error');
-    load(saved.id);
+    if (testing) return;
+    setTesting(true);
+    try {
+      const saved = await save();
+      if (!saved) return;
+      const r = await api.testProvider(saved.id);
+      toast(r.message, r.ok ? 'info' : 'error');
+      await load(saved.id);
+    } catch (e: any) {
+      toast(e.message, 'error');
+    } finally {
+      setTesting(false);
+    }
   };
 
   // 先保存（key 要存到后端才能用），再拉这个 key 能用的模型
@@ -233,7 +269,7 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
   };
 
   const remove = async () => {
-    if (!draft?.id) return setDraft(null);
+    if (!draft?.id) return setClean(null);
     const ok = await confirmDialog({
       title: `删除服务商「${draft.name}」？`,
       message: '它下面的模型会一起删掉，已经生成的文件不受影响。',
@@ -241,20 +277,24 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
       danger: true,
     });
     if (!ok) return;
-    await api.deleteProvider(draft.id);
-    setDraft(null);
+    try {
+      await api.deleteProvider(draft.id);
+    } catch (e: any) {
+      return toast(e.message, 'error');
+    }
+    setClean(null);
     await load('');
     refreshModels();
   };
 
   return (
-    <div className="modal-mask" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-mask" onMouseDown={(e) => e.target === e.currentTarget && leave(onClose)}>
       <div className="modal wide">
         <div className="modal-head">
           <b>模型管理</b>
           <span className="muted">接一个新厂商 = 添加一个服务商；同一家中转站的不同分组 key 可以各加一个</span>
           <span className="spacer" />
-          <button className="icon" onClick={onClose}>
+          <button className="icon" onClick={() => leave(onClose)}>
             <X size={18} />
           </button>
         </div>
@@ -262,10 +302,12 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
           <div className="mm-list">
             <button
               className={`mm-item ${!draft ? 'on' : ''}`}
-              onClick={() => {
-                setPull(null);
-                setDraft(null);
-              }}
+              onClick={() =>
+                leave(() => {
+                  setPull(null);
+                  setClean(null);
+                })
+              }
             >
               <LayoutList size={14} className="mm-overview-icon" />
               <span className="mm-name">全部模型</span>
@@ -276,10 +318,13 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
               <button
                 key={p.id}
                 className={`mm-item ${draft?.id === p.id ? 'on' : ''}`}
-                onClick={() => {
-                  setPull(null);
-                  setDraft(toDraft(p));
-                }}
+                onClick={() =>
+                  draft?.id !== p.id &&
+                  leave(() => {
+                    setPull(null);
+                    setClean(toDraft(p));
+                  })
+                }
               >
                 <span className={`dot ${p.enabled && p.keyHint ? 'ok' : ''}`} />
                 <span className="mm-name">{p.name}</span>
@@ -287,17 +332,17 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
               </button>
             ))}
             <div className="mm-add">
-              <button onClick={() => add('volcengine')}>
+              <button onClick={() => leave(() => add('volcengine'))}>
                 <Plus size={13} /> 火山引擎
               </button>
-              <button onClick={() => add('relay')}>
+              <button onClick={() => leave(() => add('relay'))}>
                 <Plus size={13} /> 中转站
               </button>
             </div>
             <div className="mm-add-label muted">快速添加（地址已填好）</div>
             <div className="mm-add">
               {QUICK_ADD.map((q) => (
-                <button key={q.label} onClick={() => add('relay', q)}>
+                <button key={q.label} onClick={() => leave(() => add('relay', q))}>
                   <Plus size={13} /> {q.label}
                 </button>
               ))}
@@ -520,8 +565,14 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                   删除服务商
                 </button>
                 <span className="spacer" />
-                <button className="ghost" onClick={test} disabled={saving}>
-                  保存并测试连接
+                <button className="ghost" onClick={test} disabled={saving || testing}>
+                  {testing ? (
+                    <>
+                      <Loader2 size={14} className="spin" /> 测试中…
+                    </>
+                  ) : (
+                    '保存并测试连接'
+                  )}
                 </button>
                 <button className="primary" onClick={() => save()} disabled={saving}>
                   保存

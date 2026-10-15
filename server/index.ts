@@ -22,8 +22,11 @@ import {
   saveCharacter,
   updateEpisode,
   updateProject,
+  listCanvasBackups,
+  restoreCanvasBackup,
 } from './projects.js';
-import { ADAPTERS, deleteProvider, listModels, listProviderViews, remoteModels, testModel, testProvider, upsertProvider } from './providers/index.js';
+import { ADAPTERS, deleteProvider, listModels, listProviderViews, remoteModels, resolveModel, testModel, testProvider, upsertProvider } from './providers/index.js';
+import { buildPrompt } from './prompt.js';
 import { cleanupStatus, runCleanup, startCleanupSchedule } from './cleanup.js';
 import { cancelJob, enqueue, events, getJob, listJobs, recover, resumeJob, runQuickText } from './queue.js';
 import { addAssets, deleteAsset, listAssets, renameAsset, type AssetInput } from './assets.js';
@@ -122,6 +125,15 @@ app.put('/api/projects/:pid/episodes/:eid/canvas', async (req, reply) => {
   return r;
 });
 
+app.get('/api/projects/:pid/episodes/:eid/backups', async (req) => {
+  const { pid, eid } = req.params as any;
+  return listCanvasBackups(pid, eid);
+});
+app.post('/api/projects/:pid/episodes/:eid/backups/:name/restore', async (req) => {
+  const { pid, eid, name } = req.params as any;
+  return restoreCanvasBackup(pid, eid, name);
+});
+
 // —— 角色库 ——
 app.get('/api/projects/:pid/characters', async (req) => listCharacters((req.params as any).pid));
 app.post('/api/projects/:pid/characters', async (req) => saveCharacter((req.params as any).pid, req.body as any));
@@ -207,6 +219,12 @@ app.post('/api/cleanup/run', async () => {
 
 // —— 生成与队列 ——
 app.post('/api/generate', async (req) => enqueue(req.body as GenerateRequest));
+// 预览最终提示词：和真正生成时同一套拼法（画风 + 连进来的文本 + 角色描述 + @图1 换成厂商叫法）
+app.post('/api/preview-prompt', async (req) => {
+  const r = req.body as GenerateRequest;
+  const { provider, model } = await resolveModel(r.modelId);
+  return { prompt: await buildPrompt(r, ADAPTERS[provider.type], model) };
+});
 app.get('/api/jobs', async (req) => {
   const q = req.query as any;
   return listJobs({ projectId: q.projectId, episodeId: q.episodeId, limit: Number(q.limit) || 300 });

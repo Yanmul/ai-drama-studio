@@ -14,15 +14,35 @@ import type {
   RemoteModelGuess,
 } from '../shared/types';
 
+/** 请求失败：message 是给人看的中文；status / data 留给需要细分处理的地方（比如保存冲突） */
+export class ApiError extends Error {
+  constructor(message: string, public status: number, public data: any = {}) {
+    super(message);
+  }
+  get conflict() {
+    return this.status === 409 || Boolean(this.data?.conflict);
+  }
+}
+
+const OFFLINE = '连不上本机服务：确认启动用的终端窗口还开着（双击「启动.command」或运行 npm run dev）';
+
 async function call<T>(method: string, url: string, body?: unknown, keepalive = false): Promise<T> {
-  const resp = await fetch(url, {
-    method,
-    keepalive,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(url, {
+      method,
+      keepalive,
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new ApiError(OFFLINE, 0);
+  }
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error((data as any)?.error || `请求失败 ${resp.status}`);
+  if (!resp.ok) {
+    const msg = (data as any)?.error || (resp.status === 502 || resp.status === 504 ? OFFLINE : `请求失败（${resp.status}）`);
+    throw new ApiError(msg, resp.status, data);
+  }
   return data as T;
 }
 
@@ -51,7 +71,9 @@ export const api = {
   canvas: (pid: string, eid: string) => call<CanvasFile>('GET', `/api/projects/${pid}/episodes/${eid}/canvas`),
   /** keepalive：关页面时用，浏览器会在页面关掉后把请求发完（请求体要小于 64KB） */
   saveCanvas: (pid: string, eid: string, c: CanvasFile, keepalive = false) =>
-    call('PUT', `/api/projects/${pid}/episodes/${eid}/canvas`, c, keepalive),
+    call<{ ok: boolean; savedAt?: string }>('PUT', `/api/projects/${pid}/episodes/${eid}/canvas`, c, keepalive),
+  canvasBackups: (pid: string, eid: string) => call<{ name: string; savedAt?: string; nodeCount: number }[]>('GET', `/api/projects/${pid}/episodes/${eid}/backups`),
+  restoreBackup: (pid: string, eid: string, name: string) => call('POST', `/api/projects/${pid}/episodes/${eid}/backups/${encodeURIComponent(name)}/restore`),
 
   characters: (pid: string) => call<Character[]>('GET', `/api/projects/${pid}/characters`),
   saveCharacter: (pid: string, c: Partial<Character>) =>
@@ -70,6 +92,7 @@ export const api = {
   cleanupStatus: () => call<CleanupStatus>('GET', '/api/cleanup'),
   runCleanup: () => call<CleanupStatus>('POST', '/api/cleanup/run'),
 
+  previewPrompt: (req: GenerateRequest) => call<{ prompt: string }>('POST', '/api/preview-prompt', req),
   generate: (req: GenerateRequest) => call<Job[]>('POST', '/api/generate', req),
   jobs: (pid: string) => call<Job[]>('GET', `/api/jobs?projectId=${encodeURIComponent(pid)}`),
   cancelJob: (id: string) => call<Job>('POST', `/api/jobs/${id}/cancel`),
@@ -80,9 +103,14 @@ export const api = {
   async upload(pid: string, file: File): Promise<{ file: string; kind: 'image' | 'video' | 'audio'; name: string }> {
     const form = new FormData();
     form.append('file', file);
-    const resp = await fetch(`/api/projects/${pid}/upload`, { method: 'POST', body: form });
+    let resp: Response;
+    try {
+      resp = await fetch(`/api/projects/${pid}/upload`, { method: 'POST', body: form });
+    } catch {
+      throw new ApiError(OFFLINE, 0);
+    }
     const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) throw new Error(data?.error || '上传失败');
+    if (!resp.ok) throw new ApiError(data?.error || (resp.status === 413 ? '文件太大了' : '上传失败'), resp.status, data);
     return data;
   },
 };

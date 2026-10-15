@@ -3,6 +3,7 @@
 import { useNodeConnections, useNodesData, useReactFlow, type Node } from '@xyflow/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Eye,
   ArrowUp,
   Camera,
   ChevronDown,
@@ -20,8 +21,8 @@ import {
 } from 'lucide-react';
 import type { NodeData, ParamDef } from '../../shared/types';
 import { api, fileUrl } from '../api';
-import { useApp, useCanvas } from '../context';
-import { collectInputs, estimateCost } from '../inputs';
+import { useApp, useCanvas, useNodeJobs } from '../context';
+import { buildRequest, collectInputs, estimateCost } from '../inputs';
 import { CAMERA_MOVES, KIND_CAP, KIND_LABEL, defaultParams, fileKind } from '../lib';
 import { Popover } from './Popover';
 
@@ -35,14 +36,17 @@ const PLACEHOLDER: Record<string, string> = {
 const ROLE_LABEL = { first_frame: '首帧', last_frame: '尾帧', reference: '参考' } as const;
 
 export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData }) {
-  const { models, characters, toast, openModels, openCharacters } = useApp();
+  const { models, characters, toast, openModels, openCharacters, project, episode } = useApp();
+  const nodeJobs = useNodeJobs(episode?.id, nodeId);
+  const running = nodeJobs.filter((j) => j.status === 'queued' || j.status === 'running').length;
   const { submit, addNode, uploadAsNode } = useCanvas();
   const { updateNodeData, getNode } = useReactFlow();
   const conns = useNodeConnections({ id: nodeId, handleType: 'target' });
   const srcIds = useMemo(() => conns.map((c) => c.source), [conns]);
   const srcNodes = useNodesData<Node<NodeData>>(srcIds);
   const [expanded, setExpanded] = useState(false);
-  const [pop, setPop] = useState<'' | 'params' | 'advanced' | 'camera' | 'chars' | 'model' | 'mode'>('');
+  const [pop, setPop] = useState<'' | 'params' | 'advanced' | 'camera' | 'chars' | 'model' | 'mode' | 'final'>('');
+  const [finalPrompt, setFinalPrompt] = useState<{ loading?: boolean; text?: string; error?: string }>({});
   // @ 菜单：start = @ 的位置，end = 输入 @ 时的光标位置（插入引用时替换这一段）
   const [at, setAt] = useState<{ start: number; end: number; q: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -167,7 +171,23 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
     }
   };
 
+  // 看看最终发给模型的提示词（画风、连进来的文本、角色描述都拼好、@图1 换成厂商叫法之后）
+  const previewFinal = async () => {
+    if (pop === 'final') return setPop('');
+    setPop('final');
+    if (!project || !episode || !model) return;
+    setFinalPrompt({ loading: true });
+    try {
+      const req = buildRequest(project.id, episode.id, nodeId, { ...data, gen: { ...data.gen, prompt } }, model, sources);
+      const r = await api.previewPrompt(req);
+      setFinalPrompt({ text: r.prompt });
+    } catch (e: any) {
+      setFinalPrompt({ error: e.message });
+    }
+  };
+
   const go = async () => {
+    if (busy) return;
     setBusy(true);
     try {
       await submit(nodeId);
@@ -322,7 +342,7 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
             } else if (e.key === 'Escape') setAt(null);
             else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
               e.preventDefault();
-              go();
+              if (!e.repeat) go();
             }
           }}
         />
@@ -398,6 +418,29 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
         )}
 
         <span className="spacer" />
+        <span className="chip-wrap">
+          <button className={`icon ${pop === 'final' ? 'on' : ''}`} onClick={previewFinal} title="看看最终发给模型的提示词（自动拼上画风、角色描述之后）">
+            <Eye size={16} />
+          </button>
+          <Popover open={pop === 'final'} onClose={() => setPop('')} className="final-pop right">
+            <div className="final-head">
+              最终发给「{model?.name}」的提示词
+              {finalPrompt.text && (
+                <button className="link" onClick={() => navigator.clipboard?.writeText(finalPrompt.text!).then(() => toast('已复制'))}>
+                  复制
+                </button>
+              )}
+            </div>
+            {finalPrompt.loading && (
+              <div className="muted pad">
+                <Loader2 size={14} className="spin" /> 正在拼…
+              </div>
+            )}
+            {finalPrompt.error && <div className="q-err">{finalPrompt.error}</div>}
+            {finalPrompt.text !== undefined && <pre className="final-text">{finalPrompt.text || '（空）'}</pre>}
+            <div className="muted final-foot">画风在右上角「设置」里改；角色描述在角色库里改</div>
+          </Popover>
+        </span>
         <button className="icon" onClick={translate} disabled={translating} title={textModel ? '把提示词翻译成英文' : '需要先接一个文本模型'}>
           {translating ? <Loader2 size={16} className="spin" /> : <Languages size={16} />}
         </button>
@@ -416,8 +459,14 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
         <span className="cost" title="按「模型管理」里填的单价估算">
           <Zap size={13} /> {estimateCost(model, params)}
         </span>
-        <button className="send" onClick={go} disabled={busy} title="生成（⌘ + 回车）">
+        <button
+          className="send"
+          onClick={go}
+          disabled={busy}
+          title={running ? `已有 ${running} 个在生成；再点会再提交一个（会再扣费）` : '生成（⌘ + 回车）'}
+        >
           {busy ? <Loader2 size={18} className="spin" /> : <ArrowUp size={18} />}
+          {running > 0 && <span className="send-badge">{running}</span>}
         </button>
       </div>
 

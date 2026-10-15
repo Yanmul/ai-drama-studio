@@ -29,15 +29,35 @@ function Modal({ title, sub, onClose, children, wide }: { title: string; sub?: s
 // —— 角色库 ——
 export function CharacterLibrary({ onClose }: { onClose: () => void }) {
   const { project, characters, refreshCharacters, toast } = useApp();
-  const [sel, setSel] = useState<Partial<Character> | null>(characters[0] || null);
+  const [sel, setSelRaw] = useState<Partial<Character> | null>(characters[0] || null);
+  const savedSnap = useRef(JSON.stringify(characters[0] || null));
   const fileRef = useRef<HTMLInputElement>(null);
+  // 切换 / 关闭前，有没保存的改动就先问一声
+  const pick = (c: Partial<Character> | null) => {
+    setSelRaw(c);
+    savedSnap.current = JSON.stringify(c);
+  };
+  const setSel = setSelRaw;
+  const leave = async (then: () => void) => {
+    if (sel && JSON.stringify(sel) !== savedSnap.current) {
+      const ok = await confirmDialog({
+        title: '放弃没保存的修改？',
+        message: `角色「${sel.name || '新角色'}」改了还没保存。`,
+        okText: '放弃修改',
+        cancelText: '继续编辑',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    then();
+  };
   if (!project) return null;
 
   const save = async () => {
     if (!sel?.name?.trim()) return toast('先给角色起个名字', 'error');
     try {
       const c = await api.saveCharacter(project.id, sel);
-      setSel(c);
+      pick(c);
       refreshCharacters();
       toast('已保存。改了外形描述，之后的生成都会用新的');
     } catch (e: any) {
@@ -46,17 +66,17 @@ export function CharacterLibrary({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Modal title="角色库" sub="角色的外形描述会自动拼进连到的每个生成节点；定妆图当参考图" onClose={onClose} wide>
+    <Modal title="角色库" sub="角色的外形描述会自动拼进连到的每个生成节点；定妆图当参考图" onClose={() => leave(onClose)} wide>
       <div className="mm">
         <div className="mm-list">
           {characters.map((c) => (
-            <button key={c.id} className={`mm-item ${sel?.id === c.id ? 'on' : ''}`} onClick={() => setSel(c)}>
+            <button key={c.id} className={`mm-item ${sel?.id === c.id ? 'on' : ''}`} onClick={() => sel?.id !== c.id && leave(() => pick(c))}>
               {c.image ? <img className="char-thumb" src={fileUrl(c.image)} /> : <span className="char-thumb" />}
               <span className="mm-name">{c.name}</span>
             </button>
           ))}
           <div className="mm-add">
-            <button onClick={() => setSel({ name: '', description: '' })}>
+            <button onClick={() => leave(() => pick({ name: '', description: '' }))}>
               <Plus size={13} /> 新角色
             </button>
           </div>
@@ -85,8 +105,12 @@ export function CharacterLibrary({ onClose }: { onClose: () => void }) {
                   className="danger"
                   onClick={async () => {
                     if (!(await confirmDialog({ title: `删除角色「${sel.name}」？`, okText: '删除', danger: true }))) return;
-                    await api.deleteCharacter(project.id, sel.id!);
-                    setSel(null);
+                    try {
+                      await api.deleteCharacter(project.id, sel.id!);
+                    } catch (e: any) {
+                      return toast(e.message, 'error');
+                    }
+                    pick(null);
                     refreshCharacters();
                   }}
                 >
@@ -125,11 +149,11 @@ export function CharacterLibrary({ onClose }: { onClose: () => void }) {
 
 // —— 从生成历史选择 ——
 export function HistoryPicker({ onPick, onClose }: { onPick: (file: string, kind: 'image' | 'video' | 'audio') => void; onClose: () => void }) {
-  const { project } = useApp();
+  const { project, toast } = useApp();
   const [items, setItems] = useState<Awaited<ReturnType<typeof api.history>>>([]);
   const [filter, setFilter] = useState<'all' | 'image' | 'video' | 'audio'>('all');
   useEffect(() => {
-    if (project) api.history(project.id).then(setItems);
+    if (project) api.history(project.id).then(setItems).catch((e) => toast(`读取生成历史失败：${e.message}`, 'error'));
   }, [project?.id]);
   const shown = items.filter((i) => filter === 'all' || i.kind === filter);
   return (
@@ -156,7 +180,10 @@ export function HistoryPicker({ onPick, onClose }: { onPick: (file: string, kind
             {fileKind(h.file) === 'image' && <img src={fileUrl(h.file)} />}
             {fileKind(h.file) === 'video' && <video src={fileUrl(h.file)} muted />}
             {fileKind(h.file) === 'audio' && <div className="ref-audio">♪</div>}
-            <span>{fmtTime(h.createdAt)}</span>
+            <span className="hi-prompt">{h.prompt || '（没有提示词）'}</span>
+            <span className="hi-meta">
+              {fmtTime(h.createdAt)} · {h.model.split(' · ').pop()}
+            </span>
           </button>
         ))}
       </div>
@@ -252,8 +279,12 @@ export function AssetLibrary({ onPick, onClose }: { onPick: (a: Asset) => void; 
               onClick={async () => {
                 const ok = await confirmDialog({ title: `从资产库删除「${a.name}」？`, message: '画布上已经用到的不受影响。', okText: '删除', danger: true });
                 if (!ok) return;
-                await api.deleteAsset(a.id);
-                load();
+                try {
+                  await api.deleteAsset(a.id);
+                  load();
+                } catch (e: any) {
+                  toast(e.message, 'error');
+                }
               }}
             >
               <Trash2 size={13} />

@@ -15,19 +15,25 @@ export function Popover({
   className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  // onClose 放 ref 里：父组件每次重渲染都传新函数，不能因此反复注册监听
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     if (!open) return;
     const h = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+      const t = e.target as Element;
+      // 点在下拉框菜单（挂在 body 上）里不算点外面
+      if (ref.current && !ref.current.contains(t) && !t.closest?.('.select-menu')) closeRef.current();
     };
-    const k = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    setTimeout(() => document.addEventListener('mousedown', h), 0);
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && closeRef.current();
+    const timer = setTimeout(() => document.addEventListener('mousedown', h), 0);
     document.addEventListener('keydown', k);
     return () => {
+      clearTimeout(timer);
       document.removeEventListener('mousedown', h);
       document.removeEventListener('keydown', k);
     };
-  }, [open, onClose]);
+  }, [open]);
   if (!open) return null;
   return (
     <div ref={ref} className={`popover popover-${placement} ${className}`}>

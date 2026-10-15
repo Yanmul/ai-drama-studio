@@ -1,12 +1,12 @@
-// 框选多个节点后出现：虚线框住选中的节点，上方一条工具栏
-// 排列（宫格 / 水平 / 垂直）、保存到资产、创建副本、删除
+// 选中节点后出现在上方的一条工具栏：生成、排列（宫格 / 水平 / 垂直）、保存到资产、创建副本、删除
+// 选中多个时用虚线框住；只选一个时不画框、不显示排列
 import { useStore, useReactFlow, type Edge, type Node } from '@xyflow/react';
 import { useEffect, useState } from 'react';
-import { ChevronDown, Copy, LayoutGrid, LayoutPanelLeft, Columns3, Rows3, Trash2, Archive } from 'lucide-react';
+import { ChevronDown, Copy, LayoutGrid, LayoutPanelLeft, Columns3, Rows3, Trash2, Archive, ArrowUp } from 'lucide-react';
 import type { NodeData } from '../../shared/types';
 import { api } from '../api';
-import { useApp } from '../context';
-import { activeVersion, newId } from '../lib';
+import { useApp, useCanvas } from '../context';
+import { KIND_CAP, activeVersion, newId } from '../lib';
 
 type FlowNode = Node<NodeData>;
 const GAP = 48;
@@ -16,6 +16,7 @@ const size = (n: FlowNode) => ({ w: n.measured?.width ?? 340, h: n.measured?.hei
 
 export function SelectionBar({ onDone, undo }: { onDone: () => void; undo: () => void }) {
   const { project, toast } = useApp();
+  const { submitMany } = useCanvas();
   const rf = useReactFlow<FlowNode, Edge>();
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -33,7 +34,9 @@ export function SelectionBar({ onDone, undo }: { onDone: () => void; undo: () =>
   useEffect(() => setMenu(false), [key]);
 
   const sel = key ? (rf.getNodes().filter((n) => n.selected) as FlowNode[]) : [];
-  if (sel.length < 2) return null;
+  if (!sel.length) return null;
+  const multi = sel.length > 1;
+  const gens = sel.filter((n) => KIND_CAP[n.data.kind]);
 
   const minX = Math.min(...sel.map((n) => n.position.x));
   const minY = Math.min(...sel.map((n) => n.position.y));
@@ -156,15 +159,28 @@ export function SelectionBar({ onDone, undo }: { onDone: () => void; undo: () =>
 
   return (
     <>
-      <div className="sel-box" style={box} />
+      {multi && <div className="sel-box" style={box} />}
       {!dragging && (
         <div
           className="sel-bar nodrag nopan"
           style={{ left: Math.min(Math.max(box.left + box.width / 2, 330), window.innerWidth - 330), top: Math.max(box.top - 12, 58) }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <span className="sel-count">已选 {sel.length} 个</span>
-          <span className="sel-sep" />
+          {multi && (
+            <>
+              <span className="sel-count">已选 {sel.length} 个</span>
+              <span className="sel-sep" />
+            </>
+          )}
+          {multi && gens.length > 0 && (
+            <>
+              <button onClick={() => submitMany(gens.map((n) => n.id))} title="把选中的节点各生成一次（会先确认数量和预估花费，⌘ + 回车也行）">
+                <ArrowUp size={16} /> 全部生成
+              </button>
+              <span className="sel-sep" />
+            </>
+          )}
+          {multi && (
           <div className="sel-menu-wrap">
             <button className={menu ? 'on' : ''} onClick={() => setMenu(!menu)} title="排列方式">
               <LayoutPanelLeft size={16} /> 排列 <ChevronDown size={13} />
@@ -183,11 +199,12 @@ export function SelectionBar({ onDone, undo }: { onDone: () => void; undo: () =>
               </div>
             )}
           </div>
-          <span className="sel-sep" />
+          )}
+          {multi && <span className="sel-sep" />}
           <button onClick={saveAssets} disabled={busy} title="存进资产库，所有画布都能用">
             <Archive size={16} /> 保存到资产
           </button>
-          <button onClick={duplicate} title="复制一份放在右边">
+          <button onClick={duplicate} title="复制一份放在右边（⌘D）">
             <Copy size={16} /> 创建副本
           </button>
           <span className="sel-sep" />

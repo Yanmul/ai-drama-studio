@@ -2,12 +2,15 @@
 // 选中节点时，下方弹出生成面板（GeneratePanel）。
 import { Handle, NodeToolbar, Position, useReactFlow, type Node, type NodeProps } from '@xyflow/react';
 import { memo, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ChevronLeft, ChevronRight, Download, FileText, Image as ImageIcon, Loader2, Music, Play, ScrollText, Star, Upload, UserRound, Wand2 } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, ChevronRight, Download, FileText, Image as ImageIcon, Loader2, Maximize2, Music, Play, ScrollText, Star, Upload, UserRound, Wand2, X } from 'lucide-react';
 import type { NodeData, Version } from '../../shared/types';
 import { api, fileUrl } from '../api';
-import { useApp, useCanvas } from '../context';
+import { useApp, useCanvas, useNodeJobs } from '../context';
 import { KIND_LABEL, fileKind, newId, shownVersion } from '../lib';
 import { GeneratePanel } from '../components/GeneratePanel';
+import { Lightbox } from '../components/Lightbox';
+import { Popover } from '../components/Popover';
+import { confirmDialog } from '../components/Dialog';
 
 const ICON = {
   text: FileText,
@@ -19,18 +22,17 @@ const ICON = {
 
 function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
   const { updateNodeData } = useReactFlow();
-  const { project, episode, jobs, toast } = useApp();
+  const { project, episode, toast, keepDays } = useApp();
   const { expandScript } = useCanvas();
   const [editingTitle, setEditingTitle] = useState(false);
   const [dims, setDims] = useState('');
+  const [verPop, setVerPop] = useState(false);
+  const [zoom, setZoom] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const Icon = ICON[data.kind];
   const v = shownVersion(data);
 
-  const nodeJobs = useMemo(
-    () => jobs.filter((j) => j.request.nodeId === id && j.request.episodeId === episode?.id),
-    [jobs, id, episode?.id],
-  );
+  const nodeJobs = useNodeJobs(episode?.id, id);
   const active = nodeJobs.filter((j) => j.status === 'queued' || j.status === 'running');
   const lastFailed = useMemo(() => {
     const latest = [...nodeJobs].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
@@ -60,6 +62,42 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
 
   const isMedia = data.kind === 'image' || data.kind === 'video' || data.kind === 'audio';
   const starred = v && data.starred === v.id;
+  // 当前看的不是定稿版：下游其实用的是定稿那一版，要标出来
+  const starIdx = data.starred ? data.versions.findIndex((x) => x.id === data.starred) : -1;
+  const downstreamOther = starIdx >= 0 && starIdx !== data.current;
+  const fileName = (i: number) => {
+    const f = data.versions[i]?.file || '';
+    return `${(data.title || KIND_LABEL[data.kind]).replace(/[\\/:*?"<>|]/g, '_')}-v${i + 1}${f.match(/\.[^./]+$/)?.[0] || ''}`;
+  };
+  // 自动清理：没定稿的生成 / 上传文件几天后会被删（角色图、资产库里的不会）
+  const cleanupLeft = (() => {
+    if (!keepDays || !v?.file || starred || !v.file.startsWith('projects/') || (data.characterId && v.label === '角色库')) return undefined;
+    const age = (Date.now() - Date.parse(v.createdAt)) / 86_400_000;
+    return Number.isFinite(age) ? Math.max(0, keepDays - age) : undefined;
+  })();
+
+  // 从节点里去掉一个版本（文件留着，生成历史里还能找到）
+  const removeVersion = async (i: number) => {
+    const ver = data.versions[i];
+    if (!ver) return;
+    const ok = await confirmDialog({
+      title: `从节点里去掉 v${i + 1}？`,
+      message: ver.id === data.starred ? '这是定稿版，去掉后这个节点就没有定稿了。\n文件不会删除，生成历史里还能找回。' : '文件不会删除，生成历史里还能找回。',
+      okText: '去掉',
+      danger: true,
+    });
+    if (!ok) return;
+    const versions = data.versions.filter((_, j) => j !== i);
+    const shown = data.versions[data.current];
+    const current = shown && shown.id !== ver.id ? versions.indexOf(shown) : Math.min(i, versions.length - 1);
+    updateNodeData(id, {
+      versions,
+      current,
+      starred: data.starred === ver.id ? undefined : data.starred,
+      removedJobs: ver.jobId ? [...((data.removedJobs as string[] | undefined) || []), ver.jobId] : data.removedJobs,
+      ...(data.kind === 'text' && versions[current]?.text !== undefined ? { text: versions[current].text } : {}),
+    });
+  };
   const portrait = project?.ratio === '9:16' || project?.ratio === '3:4';
 
   return (
@@ -107,7 +145,13 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
         {isMedia && v?.file && (
           <div className="media">
             {fileKind(v.file) === 'image' && (
-              <img src={fileUrl(v.file)} draggable={false} onLoad={(e) => setDims(`${e.currentTarget.naturalWidth} × ${e.currentTarget.naturalHeight}`)} />
+              <img
+                src={fileUrl(v.file)}
+                draggable={false}
+                title="双击放大"
+                onDoubleClick={() => setZoom(true)}
+                onLoad={(e) => setDims(`${e.currentTarget.naturalWidth} × ${e.currentTarget.naturalHeight}`)}
+              />
             )}
             {fileKind(v.file) === 'video' && (
               <HoverVideo
@@ -160,22 +204,49 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
               <button className="icon" disabled={data.current <= 0} onClick={() => setVersion(data.current - 1)}>
                 <ChevronLeft size={14} />
               </button>
-              <span className="ver">
-                {data.current + 1} / {data.versions.length}
-                {v?.label ? ` · ${v.label}` : ''}
+              <span className="chip-wrap">
+                <button className="ver" onClick={() => setVerPop(!verPop)} title="看全部版本：点一下切换，悬停可以去掉不要的">
+                  {data.current + 1} / {data.versions.length}
+                  {v?.label ? ` · ${v.label}` : ''}
+                </button>
+                <Popover open={verPop} onClose={() => setVerPop(false)} placement="top" className="ver-pop">
+                  {data.versions.map((x, i) => (
+                    <div key={x.id} className={`ver-item ${i === data.current ? 'on' : ''}`} onClick={() => (setVersion(i), setVerPop(false))} title={`v${i + 1}${x.label ? ' · ' + x.label : ''}`}>
+                      {fileKind(x.file) === 'image' && <img src={fileUrl(x.file)} />}
+                      {fileKind(x.file) === 'video' && <video src={fileUrl(x.file)} muted preload="metadata" />}
+                      {fileKind(x.file) === 'audio' && <span className="ver-txt">♪</span>}
+                      {!x.file && <span className="ver-txt">{(x.text || '').slice(0, 14) || '文字'}</span>}
+                      <span className="ver-no">v{i + 1}</span>
+                      {data.starred === x.id && <Star size={11} fill="currentColor" className="ver-star" />}
+                      <button className="ver-del" title="从节点里去掉这一版" onClick={(e) => (e.stopPropagation(), setVerPop(false), removeVersion(i))}>
+                        <X size={11} />
+                      </button>
+                    </div>
+                  ))}
+                </Popover>
               </span>
               <button className="icon" disabled={data.current >= data.versions.length - 1} onClick={() => setVersion(data.current + 1)}>
                 <ChevronRight size={14} />
               </button>
+              {downstreamOther && (
+                <button className="down-badge" onClick={() => setVersion(starIdx)} title="下游节点用的是定稿那一版，不是你现在看的这版；点一下切过去">
+                  下游用 v{starIdx + 1} <Star size={10} fill="currentColor" />
+                </button>
+              )}
+              {cleanupLeft !== undefined && (
+                <span className={`cleanup-left ${cleanupLeft <= 1 ? 'soon' : ''}`} title={`没定稿的版本 ${keepDays} 天后会被自动清理；满意的点 ⭐ 定稿，或下载 / 存进资产库`}>
+                  {cleanupLeft < 1 ? '今天清理' : `${Math.ceil(cleanupLeft)}天后清理`}
+                </span>
+              )}
               <span className="spacer" />
               {isMedia && v?.file && (
+                <button className="icon" title="放大查看（← → 切换版本）" onClick={() => setZoom(true)}>
+                  <Maximize2 size={13} />
+                </button>
+              )}
+              {isMedia && v?.file && (
                 // 下载当前显示的这一版，文件名：节点标题-v版本号.扩展名
-                <a
-                  className="icon"
-                  title="下载这一版"
-                  href={fileUrl(v.file)}
-                  download={`${(data.title || KIND_LABEL[data.kind]).replace(/[\\/:*?"<>|]/g, '_')}-v${data.current + 1}${v.file.match(/\.[^./]+$/)?.[0] || ''}`}
-                >
+                <a className="icon" title="下载这一版" href={fileUrl(v.file)} download={fileName(data.current)}>
                   <Download size={13} />
                 </a>
               )}
@@ -207,6 +278,19 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
           e.target.value = '';
         }}
       />
+
+      {zoom && (
+        <Lightbox
+          title={data.title}
+          versions={data.versions}
+          index={data.current}
+          starred={data.starred}
+          onIndex={setVersion}
+          onStar={(vid) => updateNodeData(id, { starred: vid })}
+          onClose={() => setZoom(false)}
+          downloadName={fileName}
+        />
+      )}
 
       {data.kind !== 'script' && (
         <NodeToolbar position={Position.Bottom} offset={16} className="panel-toolbar">

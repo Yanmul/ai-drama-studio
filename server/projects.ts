@@ -1,4 +1,5 @@
 // 项目、剧集、画布、角色的读写。
+import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { CanvasFile, Character, Episode, Project, ProjectSummary } from '../shared/types.js';
@@ -130,7 +131,15 @@ export async function updateEpisode(pid: string, eid: string, title: string): Pr
 }
 
 export async function readCanvas(pid: string, eid: string): Promise<CanvasFile> {
-  const c = await readJson<CanvasFile | null>(paths.canvas(pid, eid), null);
+  const file = paths.canvas(pid, eid);
+  const c = await readJson<CanvasFile | null>(file, null);
+  // 画布文件没了、旁边却有 .corrupt-时间戳：内容坏了，readJson（这次或之前主页读摘要时）已经把它改名保留。
+  // 告诉前端，别把空画布存回去，让用户从历史版本恢复
+  if (!c && !fs.existsSync(file)) {
+    const dir = path.dirname(file);
+    const names = await fsp.readdir(dir).catch(() => [] as string[]);
+    if (names.some((n) => n.startsWith('canvas.json.corrupt-'))) return { nodes: [], edges: [], corrupt: true };
+  }
   if (!c || typeof c !== 'object') return { nodes: [], edges: [] };
   return { ...c, nodes: Array.isArray(c.nodes) ? c.nodes : [], edges: Array.isArray(c.edges) ? c.edges : [] };
 }
@@ -190,4 +199,32 @@ export async function saveCharacter(pid: string, c: Partial<Character> & { name:
 
 export async function deleteCharacter(pid: string, cid: string) {
   await fsp.rm(path.join(paths.characters(pid), `${safe(cid)}.json`), { force: true });
+}
+
+// —— 画布历史版本（自动保存时留的 canvas.json.bak1…bak20，bak1 最新） ——
+
+export async function listCanvasBackups(pid: string, eid: string) {
+  const file = paths.canvas(pid, eid);
+  const out: { name: string; savedAt?: string; nodeCount: number }[] = [];
+  for (let i = 1; i <= 20; i++) {
+    const name = `canvas.json.bak${i}`;
+    try {
+      const c = JSON.parse(await fsp.readFile(`${file}.bak${i}`, 'utf8'));
+      if (!c || !Array.isArray(c.nodes)) continue;
+      out.push({ name, savedAt: c.savedAt, nodeCount: c.nodes.length });
+    } catch {
+      /* 没有这个备份，或者备份本身也坏了 */
+    }
+  }
+  return out;
+}
+
+/** 用某个历史版本恢复。走正常保存流程：现在这份会被轮换进 bak1，不会丢 */
+export async function restoreCanvasBackup(pid: string, eid: string, name: string) {
+  const m = /^canvas\.json\.bak(\d{1,2})$/.exec(name);
+  if (!m) throw new Error('备份名称不对');
+  const c = JSON.parse(await fsp.readFile(`${paths.canvas(pid, eid)}.bak${m[1]}`, 'utf8'));
+  if (!c || !Array.isArray(c.nodes) || !Array.isArray(c.edges)) throw new Error('这个备份也读不出来，换一个试试');
+  await saveCanvas(pid, eid, c);
+  return { ok: true };
 }

@@ -259,6 +259,8 @@ export interface CanvasFile {
   savedAt?: string;
   /** 只在保存请求里带：前端上次读到 / 存下的 savedAt，用来发现别的窗口改过（不会写进文件） */
   baseSavedAt?: string;
+  /** 只在读取时出现：文件内容坏了（已另存成 .corrupt-时间戳），返回的是空画布 */
+  corrupt?: boolean;
 }
 
 /** 服务器推送的事件 */

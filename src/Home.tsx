@@ -55,6 +55,7 @@ export function Home({
   const shown = useMemo(() => (items || []).filter((p) => !q || p.name.includes(q)), [items, q]);
 
   const create = async () => {
+    if (creating) return;
     setCreating(true);
     try {
       const d = new Date();

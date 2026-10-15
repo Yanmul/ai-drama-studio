@@ -23,16 +23,19 @@ export function AddNodeMenu({ x, y, onPick, onClose }: { x: number; y: number; o
   const [sub, setSub] = useState<'' | 'script' | 'library'>('');
   const ref = useRef<HTMLDivElement>(null);
 
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
-    const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && onClose();
-    const k = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    setTimeout(() => document.addEventListener('mousedown', h), 0);
+    const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && closeRef.current();
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && closeRef.current();
+    const timer = setTimeout(() => document.addEventListener('mousedown', h), 0);
     document.addEventListener('keydown', k);
     return () => {
+      clearTimeout(timer);
       document.removeEventListener('mousedown', h);
       document.removeEventListener('keydown', k);
     };
-  }, [onClose]);
+  }, []);
 
   const items: { key: string; icon: any; label: string; tag?: string; act?: AddMenuAction; sub?: 'script' | 'library' }[] = [
     { key: 'text', icon: FileText, label: '文本', act: { kind: 'text' } },
