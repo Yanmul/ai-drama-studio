@@ -3384,17 +3384,13 @@ input.short {
 .media {
   position: relative;
 }
-/* 截帧：放在视频控件条最右边、原来浏览器「⋮」菜单的位置（那个菜单只有下载 / 倍速 / 画中画，用不上）。
-   原生「⋮」只隐藏不移除，全屏按钮就不会挪过来被挡住；鼠标移到视频上才出现，和原生控件一起显示 */
-.media video::-webkit-media-controls-overflow-button {
-  display: none !important;
-}
+/* 截帧：视频右上角的按钮，鼠标移到视频上（或节点选中）时出现，菜单往下弹 */
 .frame-tool {
   position: absolute;
-  right: 9px;
-  bottom: 32px;
+  top: 8px;
+  right: 8px;
   display: flex;
-  flex-direction: column-reverse; /* 菜单往上弹，不挡进度条 */
+  flex-direction: column;
   align-items: flex-end;
   gap: 6px;
   opacity: 0;
@@ -3403,6 +3399,7 @@ input.short {
   z-index: 2;
 }
 .media:hover .frame-tool,
+.node.selected .frame-tool,
 .frame-tool.open {
   opacity: 1;
   pointer-events: auto;
@@ -3410,16 +3407,18 @@ input.short {
 .frame-btn {
   width: 32px;
   height: 32px;
-  border-radius: 50%;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fff;
-  background: transparent;
+  background: rgba(15, 15, 18, 0.72);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
 }
 .frame-btn:hover:not(:disabled),
 .frame-tool.open .frame-btn {
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(40, 40, 46, 0.92);
 }
 .frame-menu {
   display: flex;

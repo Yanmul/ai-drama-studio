@@ -265,7 +265,7 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
             {fileKind(v.file) === 'video' && (
               <div className={`frame-tool nodrag ${frameMenu || grabbing ? 'open' : ''}`} onMouseDown={(e) => e.stopPropagation()}>
                 <button className="frame-btn" title="截帧：当前帧 / 首帧 / 尾帧，截出来的图会放在右边并连好线" disabled={grabbing} onClick={() => setFrameMenu(!frameMenu)}>
-                  {grabbing ? <Loader2 size={16} className="spin" /> : <Camera size={17} />}
+                  {grabbing ? <Loader2 size={15} className="spin" /> : <Camera size={15} />}
                 </button>
                 {frameMenu && (
                   <div className="frame-menu">
