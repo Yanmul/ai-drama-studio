@@ -1,7 +1,7 @@
 // 选中节点时弹出的生成面板（参考 LibTV 截图二）。
 // 对应 ComfyUI 里一个模型节点的全部参数：参考素材自动编号、@ 引用、模型 / 模式 / 参数、高级设置、预估花费。
 import { useNodeConnections, useNodesData, useReactFlow, type Node } from '@xyflow/react';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUp,
   Box,
@@ -46,7 +46,8 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
   const srcNodes = useNodesData<Node<NodeData>>(srcIds);
   const [expanded, setExpanded] = useState(false);
   const [pop, setPop] = useState<'' | 'params' | 'advanced' | 'camera' | 'chars' | 'model' | 'mode'>('');
-  const [at, setAt] = useState<{ start: number; q: string } | null>(null);
+  // @ 菜单：start = @ 的位置，end = 输入 @ 时的光标位置（插入引用时替换这一段）
+  const [at, setAt] = useState<{ start: number; end: number; q: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [translating, setTranslating] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -62,6 +63,18 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
   const textModel = models.find((m) => m.capability === 'text');
 
   const setGen = (patch: Partial<NodeData['gen']>) => updateNodeData(nodeId, { gen: { ...data.gen, ...patch } });
+
+  // 提示词框自己留一份文字：节点数据要绕画布一圈才回到这里，直接拿它当 value，
+  // 在中间打字时浏览器会把光标重置到末尾（之后 @ 插入就会把光标后的字全吞掉）
+  const [prompt, setPromptLocal] = useState(data.gen.prompt);
+  const setPrompt = (v: string) => {
+    setPromptLocal(v);
+    setGen({ prompt: v });
+  };
+  useEffect(() => {
+    // 外部改了提示词（撤销、换节点等）才同步；正在输入时以输入框为准
+    if (document.activeElement !== taRef.current) setPromptLocal(data.gen.prompt);
+  }, [data.gen.prompt]);
 
   const chooseModel = (id: string) => {
     const m = list.find((x) => x.id === id);
@@ -79,18 +92,16 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
 
   // —— @ 引用 ——
   const onPromptChange = (val: string, caret: number) => {
-    setGen({ prompt: val });
+    setPrompt(val);
     const before = val.slice(0, caret);
     const m = before.match(/@([^\s@]*)$/);
-    setAt(m && media.length ? { start: caret - m[0].length, q: m[1] } : null);
+    setAt(m && media.length ? { start: caret - m[0].length, end: caret, q: m[1] } : null);
   };
   const atOptions = at ? media.filter((m) => m.token.slice(1).startsWith(at.q) || m.title.includes(at.q)) : [];
   const insertToken = (token: string) => {
     if (!at) return;
-    const p = data.gen.prompt;
-    const caret = taRef.current?.selectionStart ?? p.length;
-    const next = p.slice(0, at.start) + token + ' ' + p.slice(caret);
-    setGen({ prompt: next });
+    const next = prompt.slice(0, at.start) + token + ' ' + prompt.slice(at.end);
+    setPrompt(next);
     setAt(null);
     requestAnimationFrame(() => {
       const pos = at.start + token.length + 1;
@@ -101,13 +112,13 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
 
   /** 点素材缩略图：把 @图1 插到光标处 */
   const insertAtCaret = (token: string) => {
-    const p = data.gen.prompt;
+    const p = prompt;
     const ta = taRef.current;
     const s = ta?.selectionStart ?? p.length;
     const e = ta?.selectionEnd ?? p.length;
     const pre = s > 0 && !/\s$/.test(p.slice(0, s)) ? ' ' : '';
     const ins = `${pre}${token} `;
-    setGen({ prompt: p.slice(0, s) + ins + p.slice(e) });
+    setPrompt(p.slice(0, s) + ins + p.slice(e));
     requestAnimationFrame(() => {
       ta?.focus();
       ta?.setSelectionRange(s + ins.length, s + ins.length);
@@ -117,7 +128,7 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
   // 提示词里的 @图1 / @视频1 高亮成标签（textarea 后面垫一层同样排版的高亮层）
   const tokenSet = new Set(media.map((m) => m.token));
   const hlRef = useRef<HTMLDivElement>(null);
-  const highlighted = data.gen.prompt.split(/(@(?:图|视频|音频)\d+)/g).map((part, i) =>
+  const highlighted = prompt.split(/(@(?:图|视频|音频)\d+)/g).map((part, i) =>
     /^@(图|视频|音频)\d+$/.test(part) ? (
       <mark key={i} className={tokenSet.has(part) ? '' : 'bad'}>
         {part}
@@ -144,14 +155,14 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
 
   const translate = async () => {
     if (!textModel) return toast('还没有可用的文本模型，去「模型管理」接一个', 'error');
-    if (!data.gen.prompt.trim()) return;
+    if (!prompt.trim()) return;
     setTranslating(true);
     try {
       const r = await api.quickText(
         textModel.id,
-        `请把下面的内容翻译成英文，只输出译文，保留 @图1 这类标记不翻译：\n${data.gen.prompt}`,
+        `请把下面的内容翻译成英文，只输出译文，保留 @图1 这类标记不翻译：\n${prompt}`,
       );
-      if (r.text) setGen({ prompt: r.text.trim() });
+      if (r.text) setPrompt(r.text.trim());
     } catch (e: any) {
       toast(e.message, 'error');
     } finally {
@@ -230,8 +241,8 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
                       key={c}
                       className="list-item"
                       onClick={() => {
-                        const p = data.gen.prompt.trim();
-                        setGen({ prompt: p ? `${p}，${c}` : c });
+                        const p = prompt.trim();
+                        setPrompt(p ? `${p}，${c}` : c);
                         setPop('');
                       }}
                     >
@@ -316,7 +327,7 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
           ref={taRef}
           onScroll={(e) => hlRef.current && (hlRef.current.scrollTop = e.currentTarget.scrollTop)}
           className="prompt"
-          value={data.gen.prompt}
+          value={prompt}
           placeholder={PLACEHOLDER[data.kind]}
           onChange={(e) => onPromptChange(e.target.value, e.target.selectionStart)}
           onKeyDown={(e) => {
