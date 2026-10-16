@@ -8,6 +8,7 @@ export const KIND_LABEL: Record<NodeKind, string> = {
   video: '视频',
   audio: '音频',
   script: '脚本',
+  cut: '成片',
 };
 
 /** 节点种类 → 生成时用哪类模型 */

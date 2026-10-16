@@ -4,7 +4,8 @@
 export type Capability = 'text' | 'image' | 'video' | 'audio';
 
 /** 画布上的节点种类（参考 LibTV） */
-export type NodeKind = 'text' | 'image' | 'video' | 'audio' | 'script';
+/** cut = 成片：把连进来的视频按顺序拼成一段 */
+export type NodeKind = 'text' | 'image' | 'video' | 'audio' | 'script' | 'cut';
 
 /** 参考素材在生成里的角色 */
 export type RefRole = 'reference' | 'first_frame' | 'last_frame';

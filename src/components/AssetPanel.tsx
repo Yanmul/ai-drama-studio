@@ -12,18 +12,18 @@ import { KIND_LABEL, activeVersion, newId } from '../lib';
 
 type FlowNode = Node<NodeData>;
 type Kind = 'all' | NodeKind;
-const KINDS: Kind[] = ['all', 'image', 'video', 'audio', 'text', 'script'];
+const KINDS: Kind[] = ['all', 'image', 'video', 'cut', 'audio', 'text', 'script'];
 
 function Thumb({ kind, file }: { kind: NodeKind; file?: string }) {
   if (file && kind === 'image') return <img className="ap-thumb" src={fileUrl(file)} loading="lazy" />;
-  if (file && kind === 'video')
+  if (file && (kind === 'video' || kind === 'cut'))
     return (
       <span className="ap-thumb vid">
         <video src={fileUrl(file)} muted preload="metadata" />
         <Play size={12} fill="currentColor" />
       </span>
     );
-  const Icon = { image: ImageIcon, video: Play, audio: Music, text: FileText, script: ScrollText }[kind] || FileText;
+  const Icon = { image: ImageIcon, video: Play, audio: Music, text: FileText, script: ScrollText, cut: Play }[kind] || FileText;
   return (
     <span className="ap-thumb empty">
       <Icon size={16} />

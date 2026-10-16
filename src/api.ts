@@ -93,6 +93,8 @@ export const api = {
   cleanupStatus: () => call<CleanupStatus>('GET', '/api/cleanup'),
   runCleanup: () => call<CleanupStatus>('POST', '/api/cleanup/run'),
 
+  stitch: (pid: string, eid: string, nodeId: string, files: string[]) =>
+    call<{ file: string; duration: number }>('POST', `/api/projects/${pid}/episodes/${eid}/stitch`, { nodeId, files }),
   previewPrompt: (req: GenerateRequest) => call<{ prompt: string }>('POST', '/api/preview-prompt', req),
   generate: (req: GenerateRequest) => call<Job[]>('POST', '/api/generate', req),
   allJobs: () => call<Job[]>('GET', '/api/jobs?limit=300'),

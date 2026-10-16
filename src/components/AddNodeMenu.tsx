@@ -1,6 +1,6 @@
 // 「添加节点」菜单（参考 LibTV 截图一）：双击 / 右键画布空白处，或从节点拖线到空白处时弹出。
 import { useEffect, useRef, useState } from 'react';
-import { ChevronRight, Clock, FileText, Image as ImageIcon, Music, Search, ScrollText, Shapes, Upload, Video } from 'lucide-react';
+import { ChevronRight, Clock, FileText, Image as ImageIcon, Music, Search, ScrollText, Shapes, Upload, Video, Film } from 'lucide-react';
 import type { NodeKind } from '../../shared/types';
 import { fileUrl } from '../api';
 import { useApp } from '../context';
@@ -48,6 +48,7 @@ export function AddNodeMenu({ x, y, onPick, onClose }: { x: number; y: number; o
     { key: 'image', icon: ImageIcon, label: '图片', act: { kind: 'image' } },
     { key: 'video', icon: Video, label: '视频', act: { kind: 'video' } },
     { key: 'audio', icon: Music, label: '音频', act: { kind: 'audio' } },
+    { key: 'cut', icon: Film, label: '成片', act: { kind: 'cut', title: '成片' } },
     { key: 'script', icon: ScrollText, label: '脚本', sub: 'script' },
     { key: 'library', icon: Shapes, label: '设定库', sub: 'library' },
   ];

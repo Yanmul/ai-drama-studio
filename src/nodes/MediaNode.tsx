@@ -2,12 +2,13 @@
 // 选中节点时，下方弹出生成面板（GeneratePanel）。
 import { Handle, NodeToolbar, Position, useReactFlow, type Node, type NodeProps } from '@xyflow/react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Camera, ChevronLeft, ChevronRight, Download, FileText, Image as ImageIcon, Loader2, Maximize2, Music, Play, ScrollText, Star, Upload, UserRound, Wand2, X } from 'lucide-react';
+import { AlertTriangle, Camera, ChevronLeft, ChevronRight, Download, FileText, Image as ImageIcon, Loader2, Maximize2, Music, Play, ScrollText, Star, Upload, UserRound, Wand2, X, Film } from 'lucide-react';
 import type { NodeData, Version } from '../../shared/types';
 import { api, fileUrl } from '../api';
 import { useApp, useCanvas, useNodeJobs } from '../context';
 import { KIND_LABEL, SETTING_WORD, fileKind, newId, settingImages, settingKind, shownVersion } from '../lib';
 import { GeneratePanel } from '../components/GeneratePanel';
+import { CutPanel } from '../components/CutPanel';
 import { Lightbox } from '../components/Lightbox';
 import { Popover } from '../components/Popover';
 import { confirmDialog } from '../components/Dialog';
@@ -18,6 +19,7 @@ const ICON = {
   video: Play,
   audio: Music,
   script: ScrollText,
+  cut: Film,
 };
 
 /** 00:03.048 */
@@ -157,7 +159,8 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
     }
   };
 
-  const isMedia = data.kind === 'image' || data.kind === 'video' || data.kind === 'audio';
+  // 成片节点也显示视频结果（能预览、下载、定稿），但不能上传替换、没有生成面板
+  const isMedia = data.kind === 'image' || data.kind === 'video' || data.kind === 'audio' || data.kind === 'cut';
   const starred = v && data.starred === v.id;
   // 当前看的不是定稿版：下游其实用的是定稿那一版，要标出来
   const starIdx = data.starred ? data.versions.findIndex((x) => x.id === data.starred) : -1;
@@ -286,10 +289,10 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
         {isMedia && !v?.file && (
           <div
             className={`placeholder ${portrait && data.kind !== 'audio' ? 'portrait' : ''} ${data.kind === 'audio' ? 'short' : ''}`}
-            onDoubleClick={() => fileInput.current?.click()}
+            onDoubleClick={() => data.kind !== 'cut' && fileInput.current?.click()}
           >
             <Icon size={34} strokeWidth={1.4} />
-            <div className="ph-tip">在下方描述后生成，或双击上传</div>
+            <div className="ph-tip">{data.kind === 'cut' ? '把视频节点连进来，在下方点「拼接」' : '在下方描述后生成，或双击上传'}</div>
           </div>
         )}
 
@@ -370,7 +373,7 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
                   <Download size={13} />
                 </a>
               )}
-              {isMedia && (
+              {isMedia && data.kind !== 'cut' && (
                 <button className="icon" title="上传替换（新增一个版本）" onClick={() => fileInput.current?.click()}>
                   <Upload size={13} />
                 </button>
@@ -414,7 +417,7 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
 
       {data.kind !== 'script' && (
         <NodeToolbar position={Position.Bottom} offset={16} className="panel-toolbar">
-          <GeneratePanel nodeId={id} data={data} />
+          {data.kind === 'cut' ? <CutPanel nodeId={id} data={data} /> : <GeneratePanel nodeId={id} data={data} />}
         </NodeToolbar>
       )}
     </div>

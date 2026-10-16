@@ -744,6 +744,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     const s = rf.getNode(c.source) as FlowNode | undefined;
     if (!t || !s) return false;
     if (t.data.kind === 'script' && !s.data.characterId) return false; // 脚本只接设定库里的图（角色 / 场景 / 道具）
+    if (t.data.kind === 'cut' && s.data.kind !== 'video' && s.data.kind !== 'cut') return false; // 成片只接视频
     return !rf.getEdges().some((e) => e.source === c.source && e.target === c.target);
   }, []);
 

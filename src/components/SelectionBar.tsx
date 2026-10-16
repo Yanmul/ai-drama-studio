@@ -2,11 +2,11 @@
 // 选中多个时用虚线框住；只选一个时不画框、不显示排列
 import { useStore, useReactFlow, type Edge, type Node } from '@xyflow/react';
 import { useEffect, useState } from 'react';
-import { ChevronDown, Copy, LayoutGrid, LayoutPanelLeft, Columns3, Rows3, Trash2, Archive, ArrowUp } from 'lucide-react';
+import { ChevronDown, Copy, LayoutGrid, LayoutPanelLeft, Columns3, Rows3, Trash2, Archive, ArrowUp, Film } from 'lucide-react';
 import type { NodeData } from '../../shared/types';
 import { api } from '../api';
 import { useApp, useCanvas } from '../context';
-import { KIND_CAP, activeVersion, newId } from '../lib';
+import { KIND_CAP, activeVersion, makeNodeData, newId } from '../lib';
 
 type FlowNode = Node<NodeData>;
 const GAP = 48;
@@ -37,6 +37,7 @@ export function SelectionBar({ onDone, undo }: { onDone: () => void; undo: () =>
   if (!sel.length) return null;
   const multi = sel.length > 1;
   const gens = sel.filter((n) => KIND_CAP[n.data.kind]);
+  const videos = sel.filter((n) => n.data.kind === 'video');
 
   const minX = Math.min(...sel.map((n) => n.position.x));
   const minY = Math.min(...sel.map((n) => n.position.y));
@@ -149,6 +150,21 @@ export function SelectionBar({ onDone, undo }: { onDone: () => void; undo: () =>
     toast(`已创建 ${copies.length} 个节点的副本`, 'info', { label: '撤销', onClick: undo });
   };
 
+  // —— 拼接成片：新建一个成片节点放在右边，选中的视频按阅读顺序（先上后下、先左后右）连进去 ——
+  const makeCut = () => {
+    const order = [...videos].sort((a, b) => {
+      const dy = a.position.y - b.position.y;
+      return Math.abs(dy) > 80 ? dy : a.position.x - b.position.x;
+    });
+    const id = newId();
+    const data = makeNodeData('cut', '成片', [], project?.ratio, { clips: order.map((n) => n.id) });
+    const node: FlowNode = { id, type: 'media', position: { x: maxX + 120, y: minY }, data, selected: true };
+    rf.setNodes((ns) => [...ns.map((n) => (n.selected ? { ...n, selected: false } : n)), node]);
+    rf.setEdges((es) => [...es, ...order.map((n) => ({ id: newId('e_'), source: n.id, target: id }))]);
+    onDone();
+    toast(`已把 ${order.length} 段视频连到新的成片节点，在它下方点「拼接」`, 'info', { label: '撤销', onClick: undo });
+  };
+
   // —— 删除 ——
   const remove = async () => {
     const n = sel.length;
@@ -176,6 +192,14 @@ export function SelectionBar({ onDone, undo }: { onDone: () => void; undo: () =>
             <>
               <button onClick={() => submitMany(gens.map((n) => n.id))} title="把选中的节点各生成一次（会先确认数量和预估花费，⌘ + 回车也行）">
                 <ArrowUp size={16} /> 全部生成
+              </button>
+              <span className="sel-sep" />
+            </>
+          )}
+          {videos.length >= 2 && (
+            <>
+              <button onClick={makeCut} title="新建一个成片节点，把选中的视频按顺序连进去，再一键拼成一个视频">
+                <Film size={16} /> 拼接成片
               </button>
               <span className="sel-sep" />
             </>

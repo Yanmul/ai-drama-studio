@@ -29,6 +29,7 @@ import {
 import { ADAPTERS, deleteProvider, listModels, listProviderViews, remoteModels, resolveModel, testModel, testProvider, upsertProvider } from './providers/index.js';
 import { buildPrompt } from './prompt.js';
 import { cleanupStatus, runCleanup, startCleanupSchedule } from './cleanup.js';
+import { stitch } from './stitch.js';
 import { cancelJob, enqueue, events, getJob, listJobs, recover, resumeJob, runQuickText } from './queue.js';
 import { addAssets, deleteAsset, listAssets, renameAsset, type AssetInput } from './assets.js';
 import { PROJECT_ROOT, WORKSPACE, absFromRel, ensureDir, kindOfFile, newId, paths, readJson, rel, writeJson } from './storage.js';
@@ -135,6 +136,14 @@ app.get('/api/projects/:pid/episodes/:eid/backups', async (req) => {
 app.post('/api/projects/:pid/episodes/:eid/backups/:name/restore', async (req) => {
   const { pid, eid, name } = req.params as any;
   return restoreCanvasBackup(pid, eid, name);
+});
+
+// —— 成片拼接：把几段视频按顺序拼成一个 mp4，存成成片节点的新版本 ——
+app.post('/api/projects/:pid/episodes/:eid/stitch', async (req) => {
+  const { pid, eid } = req.params as any;
+  const { nodeId, files } = (req.body || {}) as { nodeId: string; files: string[] };
+  if (!nodeId || !Array.isArray(files)) throw new Error('参数不对');
+  return stitch(pid, eid, nodeId, files);
 });
 
 // —— 角色库 ——
