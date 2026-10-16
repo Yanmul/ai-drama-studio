@@ -224,7 +224,7 @@ export function Home({
               {items && items.length === 0 && <div className="home-empty">还没有项目，点上面「新建画布创作」开始</div>}
               <div className="recent">
                 {(items || []).slice(0, 6).map((p) => (
-                  <button key={p.id} className="recent-card" onClick={() => onOpen(p.id, p.lastEpisodeId)}>
+                  <div key={p.id} className="recent-card" role="button" tabIndex={0} onClick={() => onOpen(p.id, p.lastEpisodeId)} onKeyDown={(e) => e.key === 'Enter' && onOpen(p.id, p.lastEpisodeId)}>
                     <span className="recent-cover">
                       {p.covers[0] ? (
                         fileKind(p.covers[0]) === 'video' ? (
@@ -237,12 +237,16 @@ export function Home({
                       )}
                     </span>
                     <span className="recent-info">
-                      <span className="recent-name">{p.name}</span>
+                      <span className="recent-name">
+                        {p.starred && <Star size={13} fill="currentColor" className="star-mark" />}
+                        {p.name}
+                      </span>
                       <span className="recent-meta">
                         {ago(p.updatedAt)} · {p.nodeCount} 个节点
                       </span>
                     </span>
-                  </button>
+                    <ProjectMenu project={p} reload={load} />
+                  </div>
                 ))}
               </div>
             </>
@@ -360,13 +364,7 @@ function QuickRow({
 function ProjectsPage({ items, reload, onOpen }: { items: ProjectSummary[] | null; reload: () => void; onOpen: (pid: string, eid?: string) => void }) {
   const { toast } = useApp();
   const [q, setQ] = useState('');
-  const [menu, setMenu] = useState<string | null>(null);
   const shown = useMemo(() => (items || []).filter((p) => !q || p.name.includes(q)), [items, q]);
-  useEffect(() => {
-    const close = () => setMenu(null);
-    window.addEventListener('mousedown', close);
-    return () => window.removeEventListener('mousedown', close);
-  }, []);
   return (
     <>
       <div className="page-head">
@@ -390,57 +388,14 @@ function ProjectsPage({ items, reload, onOpen }: { items: ProjectSummary[] | nul
             <Cover files={p.covers} />
             <div className="card-info">
               <div className="card-name" title={p.name}>
+                {p.starred && <Star size={13} fill="currentColor" className="star-mark" />}
                 {p.name}
               </div>
               <div className="card-meta">
                 {ago(p.updatedAt)} · {p.nodeCount} 个节点{p.episodeCount > 1 ? ` · ${p.episodeCount} 集` : ''}
               </div>
             </div>
-            <button
-              className="card-more"
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                setMenu(menu === p.id ? null : p.id);
-              }}
-            >
-              <MoreHorizontal size={16} />
-            </button>
-            {menu === p.id && (
-              <div className="card-menu" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-                <button
-                  onClick={async () => {
-                    setMenu(null);
-                    const name = await promptDialog({ title: '重命名项目', defaultValue: p.name });
-                    if (!name || name === p.name) return;
-                    try {
-                      await api.updateProject(p.id, { name });
-                      reload();
-                    } catch (e: any) {
-                      toast(e.message, 'error');
-                    }
-                  }}
-                >
-                  <PenLine size={14} /> 重命名
-                </button>
-                <button
-                  className="danger"
-                  onClick={async () => {
-                    setMenu(null);
-                    const ok = await confirmDialog({ title: `删除项目「${p.name}」？`, message: '文件会挪到 workspace/.trash，不会立刻消失。', okText: '删除', danger: true });
-                    if (!ok) return;
-                    try {
-                      await api.deleteProject(p.id);
-                      reload();
-                    } catch (e: any) {
-                      toast(e.message, 'error');
-                    }
-                  }}
-                >
-                  <Trash2 size={14} /> 删除
-                </button>
-              </div>
-            )}
+            <ProjectMenu project={p} reload={reload} />
           </div>
         ))}
       </div>
@@ -626,5 +581,70 @@ function CleanupInfo({ toast }: { toast: (m: string, k?: 'info' | 'error') => vo
     >
       {busy ? <Loader2 size={15} className="spin" /> : <Eraser size={15} />} 自动清理{s.nextRun ? ` · 下次 ${fmtDay(s.nextRun).split(' ')[0]}` : ''}
     </button>
+  );
+}
+
+/** 项目卡片右下角的「⋯」：收藏 / 重命名 / 删除（首页最近项目、项目页共用） */
+function ProjectMenu({ project: p, reload }: { project: ProjectSummary; reload: () => void }) {
+  const { toast } = useApp();
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if ((e.target as Element).closest?.('.card-menu, .card-more')) return;
+      setOpen(false);
+    };
+    window.addEventListener('mousedown', close, true);
+    return () => window.removeEventListener('mousedown', close, true);
+  }, [open]);
+  const act = async (fn: () => Promise<unknown>) => {
+    setOpen(false);
+    try {
+      await fn();
+      reload();
+    } catch (e: any) {
+      toast(e.message, 'error');
+    }
+  };
+  return (
+    <>
+      <button
+        className={`card-more ${open ? 'on' : ''}`}
+        title="更多：收藏、重命名、删除"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(!open);
+        }}
+      >
+        <MoreHorizontal size={16} />
+      </button>
+      {open && (
+        <div className="card-menu" onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => act(() => api.updateProject(p.id, { starred: !p.starred }))}>
+            <Star size={14} fill={p.starred ? 'currentColor' : 'none'} className={p.starred ? 'star-mark' : ''} /> {p.starred ? '取消收藏' : '收藏'}
+          </button>
+          <button
+            onClick={async () => {
+              setOpen(false);
+              const name = await promptDialog({ title: '重命名项目', defaultValue: p.name });
+              if (!name || name === p.name) return;
+              act(() => api.updateProject(p.id, { name }));
+            }}
+          >
+            <PenLine size={14} /> 重命名
+          </button>
+          <button
+            className="danger"
+            onClick={async () => {
+              setOpen(false);
+              const ok = await confirmDialog({ title: `删除项目「${p.name}」？`, message: '文件会挪到 workspace/.trash，不会立刻消失。', okText: '删除', danger: true });
+              if (ok) act(() => api.deleteProject(p.id));
+            }}
+          >
+            <Trash2 size={14} /> 删除
+          </button>
+        </div>
+      )}
+    </>
   );
 }

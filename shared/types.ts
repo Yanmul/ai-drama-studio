@@ -212,6 +212,8 @@ export interface Project {
   style: string; // 画风描述，自动拼到每条提示词前面
   ratio: string;
   createdAt: string;
+  /** 收藏：首页、项目页排在最前面，带星标 */
+  starred?: boolean;
 }
 
 /** 资产库里的一项（所有画布共用） */

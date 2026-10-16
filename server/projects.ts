@@ -64,7 +64,8 @@ export async function projectSummaries(): Promise<ProjectSummary[]> {
     covers.sort((a, b) => b.at.localeCompare(a.at));
     out.push({ ...p, episodeCount: eps.length, nodeCount, updatedAt, lastEpisodeId, covers: covers.slice(0, 4).map((c) => c.file) });
   }
-  return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  // 收藏的排前面，其余按最近修改
+  return out.sort((a, b) => Number(Boolean(b.starred)) - Number(Boolean(a.starred)) || b.updatedAt.localeCompare(a.updatedAt));
 }
 
 /** 删除画布：不真删，挪到 workspace/.trash，后悔了还能拖回来 */

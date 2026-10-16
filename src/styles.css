@@ -3770,3 +3770,37 @@ input.short {
 .mm-sec-models .pull-list {
   max-height: 360px;
 }
+
+/* —— 项目卡片：收藏星标、右下角「⋯」菜单 —— */
+.star-mark {
+  color: var(--warn);
+  flex-shrink: 0;
+}
+.recent-name,
+.card-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.recent-card {
+  position: relative;
+  cursor: pointer;
+}
+.recent-card .card-more {
+  right: 8px;
+  bottom: 8px;
+  opacity: 0;
+}
+.recent-card:hover .card-more,
+.card-more.on {
+  opacity: 1;
+}
+.card-more.on {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.recent-card .card-menu {
+  right: 8px;
+  bottom: auto;
+  top: calc(100% - 4px);
+}
