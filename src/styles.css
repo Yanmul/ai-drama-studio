@@ -1546,29 +1546,41 @@ textarea.node-text {
   resize: none;
   box-shadow: none !important;
 }
+/* 文字由下面的高亮层画（这样 @引用 能单独上色），textarea 只负责光标和选区 */
 textarea.prompt {
   position: relative;
   z-index: 1;
-  color: var(--text);
+  color: transparent;
   caret-color: #fff;
   overflow: auto;
+  scrollbar-gutter: stable;
+}
+textarea.prompt::placeholder {
+  color: var(--text-3);
+}
+textarea.prompt::selection {
+  color: transparent;
+  background: rgba(122, 167, 255, 0.35);
 }
 .prompt-hl {
   position: absolute;
   inset: 0;
-  color: transparent;
+  color: var(--text);
   pointer-events: none;
   overflow: hidden;
+  scrollbar-gutter: stable;
 }
+/* 不能加 padding / 加粗：会改变字宽，和上面的光标对不齐 */
 .prompt-hl mark {
-  color: transparent;
-  background: rgba(122, 167, 255, 0.2);
+  color: #b9d0ff;
+  background: rgba(122, 167, 255, 0.3);
   border-radius: 5px;
-  box-shadow: 0 0 0 1px rgba(122, 167, 255, 0.55);
+  box-shadow: 0 0 0 1.5px rgba(122, 167, 255, 0.3);
 }
 .prompt-hl mark.bad {
-  background: rgba(248, 113, 113, 0.18);
-  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.5);
+  color: #fca5a5;
+  background: rgba(248, 113, 113, 0.22);
+  box-shadow: 0 0 0 1.5px rgba(248, 113, 113, 0.28);
 }
 .gen-panel.expanded .prompt {
   min-height: 230px;
