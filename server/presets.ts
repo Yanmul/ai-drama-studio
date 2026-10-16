@@ -55,7 +55,8 @@ export const PRESETS: Record<string, Preset> = {
     params: [
       { key: 'ratio', label: '比例', type: 'select', options: [...RATIOS_VIDEO, 'adaptive'], default: '16:9' },
       { key: 'resolution', label: '清晰度', type: 'select', options: ['480p', '720p', '1080p'], default: '720p' },
-      { key: 'duration', label: '时长', type: 'select', options: [4, 5, 6, 8, 10, 12, 15], default: 5, unit: 's' },
+      // Seedance 2.0 支持 4～15 秒任意整数秒
+      { key: 'duration', label: '时长', type: 'select', options: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], default: 5, unit: 's' },
       { key: 'count', label: '条数', type: 'select', options: [1, 2, 3, 4], default: 1, unit: '个' },
       { key: 'generate_audio', label: '生成声音', type: 'boolean', default: true },
       seedAdvanced,
