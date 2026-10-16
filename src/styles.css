@@ -4466,22 +4466,36 @@ input.short {
 }
 
 .chat-input {
-  border-top: 1px solid var(--line);
-  padding: 10px 12px 10px;
+  padding: 4px 12px 12px;
+}
+/* 输入区：一个圆角框，里面是待发图片、输入框、工具条 */
+.chat-box {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  border-radius: 16px;
+  padding: 11px 10px 8px 13px;
+  cursor: text;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.chat-input textarea {
+.chat-box:focus-within {
+  border-color: rgba(122, 167, 255, 0.5);
+  box-shadow: 0 0 0 3px rgba(122, 167, 255, 0.1);
+}
+.chat-box textarea {
   width: 100%;
+  min-height: 72px;
+  max-height: 260px;
   resize: none;
   background: transparent;
   border: 0;
+  border-radius: 0;
   box-shadow: none !important;
-  padding: 2px 2px;
+  padding: 0 2px 0 0;
   font-size: 14px;
   line-height: 1.6;
-  max-height: 200px;
 }
 .chat-pending {
   display: flex;
@@ -4543,8 +4557,44 @@ input.short {
   border-color: rgba(122, 167, 255, 0.4);
   background: var(--accent-soft);
 }
-.chat-model-select {
-  max-width: 170px;
+.chat-model-wrap {
+  min-width: 0;
+}
+.chat-model-btn {
+  max-width: 180px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  padding: 5px 8px;
+}
+.chat-model-btn:hover {
+  color: var(--text);
+}
+.chat-model-btn .sel-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-model-pop {
+  min-width: 250px;
+}
+.chat-model-pop .list-item {
+  gap: 8px;
+}
+.chat-model-pop .list-item.on {
+  background: var(--surface-3);
+}
+.chat-model-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-model-pop .muted {
+  font-size: 11.5px;
+}
+.chat-model-check {
+  color: var(--accent);
+  flex: none;
 }
 .chat-send {
   width: 32px;

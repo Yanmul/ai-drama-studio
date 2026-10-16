@@ -26,7 +26,6 @@ import { api, fileUrl } from '../api';
 import { useApp } from '../context';
 import { confirmDialog, promptDialog } from './Dialog';
 import { Popover } from './Popover';
-import { Select } from './Select';
 
 const LAST_CHAT = 'chatLast';
 const LAST_MODEL = 'chatModel';
@@ -101,6 +100,7 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
   const [streaming, setStreaming] = useState<string | null>(null);
   const [listOpen, setListOpen] = useState(false);
   const [canvasMenu, setCanvasMenu] = useState<string | null>(null);
+  const [modelMenu, setModelMenu] = useState(false);
   const [withProject, setWithProject] = useState(() => localStorage.getItem(WITH_PROJECT) !== '0');
   const [dragOver, setDragOver] = useState(false);
   const abort = useRef<AbortController | null>(null);
@@ -140,7 +140,7 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
     const el = ta.current;
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
   }, [input]);
 
   const open = (id: string) => {
@@ -423,6 +423,7 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="chat-input">
+        <div className="chat-box" onMouseDown={(e) => e.target === e.currentTarget && (e.preventDefault(), ta.current?.focus())}>
         {(images.length > 0 || uploading > 0) && (
           <div className="chat-pending">
             {images.map((f) => (
@@ -442,7 +443,7 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
         )}
         <textarea
           ref={ta}
-          rows={1}
+          rows={3}
           value={input}
           placeholder={busy ? '正在回复…' : '问点什么，Enter 发送，Shift + Enter 换行；可以粘贴或拖入图片'}
           onChange={(e) => setInput(e.target.value)}
@@ -490,12 +491,29 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
           )}
           <span className="spacer" />
           {textModels.length > 0 && (
-            <Select
-              className="chat-model-select"
-              value={modelId}
-              options={textModels.map((m) => ({ value: m.id, label: m.name, hint: m.providerName }))}
-              onChange={setModelId}
-            />
+            <span className="chip-wrap chat-model-wrap">
+              <button className="sel chat-model-btn" title="换模型" onClick={() => setModelMenu(!modelMenu)}>
+                <Sparkles size={13} />
+                <span className="sel-text">{textModels.find((m) => m.id === modelId)?.name || '选模型'}</span>
+                <ChevronDown size={13} />
+              </button>
+              <Popover open={modelMenu} onClose={() => setModelMenu(false)} placement="top" className="right list-pop chat-model-pop">
+                {textModels.map((m) => (
+                  <button
+                    key={m.id}
+                    className={`list-item ${m.id === modelId ? 'on' : ''}`}
+                    onClick={() => {
+                      setModelId(m.id);
+                      setModelMenu(false);
+                    }}
+                  >
+                    <span className="chat-model-name">{m.name}</span>
+                    <span className="muted">{m.providerName}</span>
+                    {m.id === modelId && <Check size={14} className="chat-model-check" />}
+                  </button>
+                ))}
+              </Popover>
+            </span>
           )}
           {busy ? (
             <button className="chat-send stop" title="停止" onClick={() => abort.current?.abort()}>
@@ -506,6 +524,7 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
               <ArrowUp size={16} />
             </button>
           )}
+        </div>
         </div>
       </div>
       {dragOver && <div className="chat-drop">松手发图片</div>}
