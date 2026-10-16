@@ -2,7 +2,7 @@
 // 选中节点时，下方弹出生成面板（GeneratePanel）。
 import { Handle, NodeToolbar, Position, useReactFlow, type Node, type NodeProps } from '@xyflow/react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Camera, ChevronLeft, ChevronRight, Download, FileText, Image as ImageIcon, Loader2, Maximize2, Music, Play, ScrollText, Star, Upload, UserRound, Wand2, X, Film } from 'lucide-react';
+import { AlertTriangle, Camera, Maximize, Pause, Volume2, VolumeX, ChevronLeft, ChevronRight, Download, FileText, Image as ImageIcon, Loader2, Maximize2, Music, Play, ScrollText, Star, Upload, UserRound, Wand2, X, Film } from 'lucide-react';
 import type { NodeData, Version } from '../../shared/types';
 import { api, fileUrl } from '../api';
 import { useApp, useCanvas, useNodeJobs } from '../context';
@@ -426,9 +426,16 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
 
 export const MediaNode = memo(MediaNodeImpl);
 
+function fmtClock(t: number) {
+  if (!Number.isFinite(t)) return '0:00';
+  const m = Math.floor(t / 60);
+  return `${m}:${String(Math.floor(t - m * 60)).padStart(2, '0')}`;
+}
+
 /**
- * 视频：鼠标移上去就静音预览，移开就暂停；点三角照常播放。
- * 预览时点了小喇叭（开声音）或者自己点了播放 / 暂停，就算「正式在看」，移开鼠标不再自动暂停。
+ * 视频：鼠标移上去就静音预览，移开就暂停。
+ * 画面本身可以拖动节点（点一下不移动 = 播放 / 暂停）；底下自己做的控制条才是「点了不拖」的区域。
+ * 预览时开了声音或者自己点了播放 / 暂停，就算「正式在看」，移开鼠标不再自动暂停。
  */
 function HoverVideo({
   src,
@@ -443,23 +450,29 @@ function HoverVideo({
   const ref = useRef<HTMLVideoElement>(null);
   const previewing = useRef(false);
   const starting = useRef(false); // 我们自己调 play() 引起的 play 事件，不算用户操作
+  const down = useRef<{ x: number; y: number } | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [muted, setMuted] = useState(true);
+  const [t, setT] = useState(0);
+  const [dur, setDur] = useState(0);
+
+  const toggle = () => {
+    const el = ref.current;
+    if (!el) return;
+    previewing.current = false;
+    if (el.paused || previewing.current) {
+      el.play().catch(() => {});
+    } else el.pause();
+  };
+
   return (
-    <video
-      ref={(el) => {
-        ref.current = el;
-        if (videoRef) videoRef.current = el;
-      }}
-      className="nodrag"
-      src={src}
-      controls
-      loop
-      playsInline
-      preload="metadata"
-      onLoadedMetadata={onLoadedMetadata}
+    <div
+      className={`hv ${playing ? 'playing' : ''}`}
       onMouseEnter={() => {
         const el = ref.current;
         if (!el || !el.paused) return;
         el.muted = true;
+        setMuted(true);
         previewing.current = true;
         starting.current = true;
         el.play()
@@ -471,15 +484,89 @@ function HoverVideo({
         if (el && previewing.current) el.pause();
         previewing.current = false;
       }}
-      onVolumeChange={(e) => {
-        if (!e.currentTarget.muted) previewing.current = false;
-      }}
-      onPlay={() => {
-        if (!starting.current) previewing.current = false;
-      }}
-      onPause={() => {
-        previewing.current = false;
-      }}
-    />
+    >
+      <video
+        ref={(el) => {
+          ref.current = el;
+          if (videoRef) videoRef.current = el;
+        }}
+        src={src}
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={(e) => {
+          setDur(e.currentTarget.duration);
+          onLoadedMetadata(e);
+        }}
+        onTimeUpdate={(e) => setT(e.currentTarget.currentTime)}
+        // 在画面上按下去又松开、几乎没移动 = 点击：播放 / 暂停；移动了就是在拖节点
+        onPointerDown={(e) => (down.current = { x: e.clientX, y: e.clientY })}
+        onPointerUp={(e) => {
+          const d = down.current;
+          down.current = null;
+          if (d && Math.abs(e.clientX - d.x) < 4 && Math.abs(e.clientY - d.y) < 4) {
+            const el = ref.current;
+            if (!el) return;
+            if (previewing.current) {
+              // 正在静音预览：点一下 = 开声音从头好好看
+              previewing.current = false;
+              el.muted = false;
+              setMuted(false);
+            } else if (el.paused) el.play().catch(() => {});
+            else el.pause();
+          }
+        }}
+        onVolumeChange={(e) => {
+          setMuted(e.currentTarget.muted);
+          if (!e.currentTarget.muted) previewing.current = false;
+        }}
+        onPlay={() => {
+          setPlaying(true);
+          if (!starting.current) previewing.current = false;
+        }}
+        onPause={() => {
+          setPlaying(false);
+          previewing.current = false;
+        }}
+      />
+      <div className="hv-bar nodrag nopan" onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+        <button className="hv-btn" onClick={toggle} title={playing ? '暂停' : '播放'}>
+          {playing ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" />}
+        </button>
+        <span className="hv-time">{fmtClock(t)}</span>
+        <input
+          className="hv-seek"
+          type="range"
+          min={0}
+          max={dur || 0}
+          step={0.01}
+          value={t}
+          style={{ ['--p' as any]: dur ? `${(t / dur) * 100}%` : '0%' }}
+          onChange={(e) => {
+            const el = ref.current;
+            if (!el) return;
+            previewing.current = false;
+            el.currentTime = Number(e.target.value);
+            setT(el.currentTime);
+          }}
+        />
+        <span className="hv-time">{fmtClock(dur)}</span>
+        <button
+          className="hv-btn"
+          title={muted ? '打开声音' : '静音'}
+          onClick={() => {
+            const el = ref.current;
+            if (!el) return;
+            el.muted = !el.muted;
+          }}
+        >
+          {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+        </button>
+        <button className="hv-btn" title="全屏" onClick={() => ref.current?.requestFullscreen?.()}>
+          <Maximize size={13} />
+        </button>
+      </div>
+    </div>
   );
 }

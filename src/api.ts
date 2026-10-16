@@ -12,6 +12,9 @@ import type {
   CleanupStatus,
   ProviderView,
   RemoteModelGuess,
+  Chat,
+  ChatStreamEvent,
+  ChatSummary,
 } from '../shared/types';
 
 /** 请求失败：message 是给人看的中文；status / data 留给需要细分处理的地方（比如保存冲突） */
@@ -122,5 +125,63 @@ export const api = {
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) throw new ApiError(data?.error || (resp.status === 413 ? '文件太大了' : '上传失败'), resp.status, data);
     return data;
+  },
+
+  // —— 对话框 ——
+  chats: () => call<ChatSummary[]>('GET', '/api/chats'),
+  chat: (id: string) => call<Chat>('GET', `/api/chats/${id}`),
+  createChat: (modelId?: string) => call<Chat>('POST', '/api/chats', { modelId }),
+  updateChat: (id: string, patch: { title?: string; modelId?: string }) => call<Chat>('PUT', `/api/chats/${id}`, patch),
+  deleteChat: (id: string) => call('DELETE', `/api/chats/${id}`),
+  async chatUpload(id: string, file: File): Promise<{ file: string }> {
+    const form = new FormData();
+    form.append('file', file);
+    let resp: Response;
+    try {
+      resp = await fetch(`/api/chats/${id}/upload`, { method: 'POST', body: form });
+    } catch {
+      throw new ApiError(OFFLINE, 0);
+    }
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new ApiError(data?.error || (resp.status === 413 ? '图片太大了' : '上传失败'), resp.status, data);
+    return data;
+  },
+  /** 发消息：服务器一行一个 JSON 推回来，每行调一次 onEvent；signal 中止 = 停止生成 */
+  async chatSend(
+    id: string,
+    body: { text?: string; images?: string[]; modelId: string; projectId?: string; episodeId?: string; regenerate?: boolean },
+    onEvent: (e: ChatStreamEvent) => void,
+    signal: AbortSignal,
+  ) {
+    let resp: Response;
+    try {
+      resp = await fetch(`/api/chats/${id}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return;
+      throw new ApiError(OFFLINE, 0);
+    }
+    if (!resp.ok || !resp.body) {
+      const data = await resp.json().catch(() => ({}));
+      throw new ApiError((data as any)?.error || `请求失败（${resp.status}）`, resp.status, data);
+    }
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i: number;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i).trim();
+          buf = buf.slice(i + 1);
+          if (line) onEvent(JSON.parse(line));
+        }
+      }
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return;
+      throw new ApiError('连接中断了：回复没收完', 0);
+    }
   },
 };

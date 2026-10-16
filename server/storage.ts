@@ -26,6 +26,9 @@ export const paths = {
   canvas: (pid: string, eid: string) => path.join(WORKSPACE, 'projects', safe(pid), 'episodes', safe(eid), 'canvas.json'),
   nodeAssets: (pid: string, eid: string, nodeId: string) =>
     path.join(WORKSPACE, 'projects', safe(pid), 'episodes', safe(eid), 'assets', safe(nodeId)),
+  chats: () => path.join(WORKSPACE, 'chats'),
+  chat: (id: string) => path.join(WORKSPACE, 'chats', `${safe(id)}.json`),
+  chatFiles: (id: string) => path.join(WORKSPACE, 'chats', 'files', safe(id)),
   jobsActive: () => path.join(WORKSPACE, 'jobs', 'active'),
   jobsDone: (month: string) => path.join(WORKSPACE, 'jobs', 'done', month),
   jobsDoneRoot: () => path.join(WORKSPACE, 'jobs', 'done'),

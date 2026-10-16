@@ -8,10 +8,12 @@ import { newId, nowIso, paths, readJson, writeJson } from '../storage.js';
 import { relayAdapter } from './relay.js';
 import type { Adapter, ProviderRecord } from './types.js';
 import { ARK_DEFAULT_BASE, volcengineAdapter } from './volcengine.js';
+import { anthropicAdapter } from './anthropic.js';
 
 export const ADAPTERS: Record<ProviderType, Adapter> = {
   volcengine: volcengineAdapter,
   relay: relayAdapter,
+  anthropic: anthropicAdapter,
 };
 
 interface ProvidersFile {

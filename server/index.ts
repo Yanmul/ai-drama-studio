@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import type { CanvasFile, GenerateRequest, ServerEvent } from '../shared/types.js';
+import type { CanvasFile, ChatStreamEvent, GenerateRequest, ServerEvent } from '../shared/types.js';
 import { PRESETS } from './presets.js';
 import {
   createEpisode,
@@ -30,6 +30,7 @@ import { ADAPTERS, deleteProvider, listModels, listProviderViews, remoteModels, 
 import { buildPrompt } from './prompt.js';
 import { cleanupStatus, runCleanup, startCleanupSchedule } from './cleanup.js';
 import { stitch } from './stitch.js';
+import { createChat, deleteChat, getChat, listChats, sendMessage, updateChat } from './chat.js';
 import { cancelJob, enqueue, events, getJob, listJobs, recover, resumeJob, runQuickText } from './queue.js';
 import { addAssets, deleteAsset, listAssets, renameAsset, type AssetInput } from './assets.js';
 import { PROJECT_ROOT, WORKSPACE, absFromRel, ensureDir, kindOfFile, newId, paths, readJson, rel, writeJson } from './storage.js';
@@ -157,6 +158,61 @@ app.delete('/api/projects/:pid/characters/:cid', async (req) => {
   const { pid, cid } = req.params as any;
   await deleteCharacter(pid, cid);
   return { ok: true };
+});
+
+// —— 对话框 ——
+app.get('/api/chats', async () => listChats());
+app.post('/api/chats', async (req) => createChat((req.body as any)?.modelId));
+app.get('/api/chats/:id', async (req) => getChat((req.params as any).id));
+app.put('/api/chats/:id', async (req) => updateChat((req.params as any).id, req.body as any));
+app.delete('/api/chats/:id', async (req) => {
+  await deleteChat((req.params as any).id);
+  return { ok: true };
+});
+app.post('/api/chats/:id/upload', async (req) => {
+  const { id } = req.params as any;
+  await getChat(id); // 对话不存在就别建目录
+  const part = await (req as any).file();
+  if (!part) throw new Error('没有收到文件');
+  const IMG_EXT: Record<string, string> = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif' };
+  const ext = IMG_EXT[part.mimetype] || '';
+  if (!ext) {
+    part.file.resume();
+    throw new Error('对话里只能发图片（png / jpg / webp / gif）');
+  }
+  const dir = paths.chatFiles(id);
+  await ensureDir(dir);
+  const file = path.join(dir, `${newId('img_')}${ext}`);
+  const tmp = `${file}.uploading`;
+  try {
+    await pipeline(part.file, fs.createWriteStream(tmp));
+    if (part.file.truncated) throw new Error(TOO_LARGE);
+    await fsp.rename(tmp, file);
+  } catch (e: any) {
+    await fsp.rm(tmp, { force: true });
+    if (e?.code === 'FST_REQ_FILE_TOO_LARGE') throw new Error(TOO_LARGE);
+    throw e;
+  }
+  return { file: rel(file) };
+});
+// 发消息：一行一个 JSON 往回推（用户消息 → 一段段文字 → 完成 / 出错）；浏览器断开 = 用户点了停止
+app.post('/api/chats/:id/send', async (req, reply) => {
+  const { id } = req.params as any;
+  reply.hijack();
+  reply.raw.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
+  const ctrl = new AbortController();
+  reply.raw.on('close', () => {
+    if (!reply.raw.writableFinished) ctrl.abort();
+  });
+  const emit = (e: ChatStreamEvent) => {
+    if (!reply.raw.destroyed) reply.raw.write(JSON.stringify(e) + '\n');
+  };
+  try {
+    await sendMessage(id, req.body as any, emit, ctrl.signal);
+  } catch (e: any) {
+    emit({ t: 'error', error: String(e?.message || e) });
+  }
+  reply.raw.end();
 });
 
 // —— 上传素材 ——

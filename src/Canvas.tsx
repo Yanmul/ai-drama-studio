@@ -532,6 +532,22 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     [models, project.ratio],
   );
 
+  // 对话框里「放到画布」：放在画布可见区域中间（右边被对话框挡住的部分不算）
+  useEffect(() => {
+    const h = (e: Event) => {
+      const { text, kind } = (e as CustomEvent<{ text: string; kind: 'text' | 'script' }>).detail;
+      const panel = document.querySelector('.chat-panel')?.getBoundingClientRect();
+      const right = panel ? panel.left : window.innerWidth;
+      const pos = rf.screenToFlowPosition({ x: right / 2 - 170, y: window.innerHeight / 2 - 140 });
+      const heading = text.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim();
+      const id = addNode(kind, pos, { text, title: heading ? heading.slice(0, 20) : undefined });
+      rf.setNodes((ns) => ns.map((n) => ({ ...n, selected: n.id === id })));
+      toast(`已放到画布：${kind === 'script' ? '脚本' : '文本'}节点`);
+    };
+    window.addEventListener('ads:add-text-node', h);
+    return () => window.removeEventListener('ads:add-text-node', h);
+  }, [addNode]);
+
   const uploadAsNode: CanvasCtx['uploadAsNode'] = useCallback(
     async (file, pos, connectTo) => {
       try {

@@ -27,6 +27,7 @@ import {
   SlidersHorizontal,
   Star,
   Trash2,
+  MessageCircle,
 } from 'lucide-react';
 import type { Asset, Capability, CleanupStatus, ModelInfo, NodeKind, ProjectSummary } from '../shared/types';
 import { api, fileUrl } from './api';
@@ -89,6 +90,8 @@ export function Home({
   onOpenModels,
   onToggleQueue,
   queueOpen,
+  onToggleChat,
+  chatOpen,
 }: {
   view: HomeView;
   onNav: (v: HomeView) => void;
@@ -96,6 +99,8 @@ export function Home({
   onOpenModels: () => void;
   onToggleQueue: () => void;
   queueOpen: boolean;
+  onToggleChat: () => void;
+  chatOpen: boolean;
 }) {
   const { models, toast } = useApp();
   const jobs = useJobs();
@@ -183,6 +188,9 @@ export function Home({
           <button className="ghost" onClick={onOpenModels}>
             <SlidersHorizontal size={15} /> 模型
             {real.length ? <span className="pill">已接入 {real.length}</span> : <span className="pill warn">未接入</span>}
+          </button>
+          <button className={`ghost ${chatOpen ? 'on' : ''}`} onClick={onToggleChat} title="和 AI 对话：写剧本、拆分镜、写提示词">
+            <MessageCircle size={15} /> 对话
           </button>
         </header>
 

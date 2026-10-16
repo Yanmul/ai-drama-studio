@@ -55,7 +55,7 @@ export interface ModelInfo {
 }
 
 /** 服务商类型 = 适配器类型 */
-export type ProviderType = 'volcengine' | 'relay';
+export type ProviderType = 'volcengine' | 'relay' | 'anthropic';
 
 /** 中转站模型的接口格式 */
 export type RelayProtocol = 'openai-chat' | 'openai-images' | 'openai-videos' | 'ark-image' | 'ark-video' | 'custom';
@@ -300,3 +300,37 @@ export interface CleanupStatus {
   keepDays: number;
   everyDays: number;
 }
+
+/** 对话框里的一条消息 */
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  /** 用户发的图片（工作文件夹里的相对路径） */
+  images?: string[];
+  createdAt: string;
+  /** 回复用的模型（显示名） */
+  model?: string;
+  /** 回复没写完：用户点了停止，或者中途出错 */
+  stopped?: boolean;
+  error?: string;
+}
+
+/** 一个对话（存在 workspace/chats/<id>.json） */
+export interface Chat {
+  id: string;
+  title: string;
+  modelId?: string;
+  messages: ChatMessage[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ChatSummary = Pick<Chat, 'id' | 'title' | 'updatedAt'> & { count: number };
+
+/** 发消息时服务器流式返回的每一行 */
+export type ChatStreamEvent =
+  | { t: 'user'; message: ChatMessage }
+  | { t: 'delta'; text: string }
+  | { t: 'done'; message: ChatMessage; title: string }
+  | { t: 'error'; error: string; message?: ChatMessage };

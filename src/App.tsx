@@ -1,6 +1,7 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, Clapperboard, ListChecks, Plus, Settings, SlidersHorizontal } from 'lucide-react';
+import { ChevronLeft, Clapperboard, ListChecks, MessageCircle, Plus, Settings, SlidersHorizontal } from 'lucide-react';
+import { ChatPanel } from './components/ChatPanel';
 import type { Character, Episode, Job, ModelInfo, Project, ServerEvent } from '../shared/types';
 import { api } from './api';
 import { Canvas } from './Canvas';
@@ -38,6 +39,12 @@ export function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [modal, setModal] = useState<'' | 'models' | 'chars' | 'history' | 'project'>('');
   const [showQueue, setShowQueue] = useState(false);
+  // 对话框：开着还是关着记在本机，刷新后保持
+  const [showChat, setShowChat] = useState(() => localStorage.getItem('chatOpen') === '1');
+  const toggleChat = (v = !showChat) => {
+    localStorage.setItem('chatOpen', v ? '1' : '0');
+    setShowChat(v);
+  };
   const [cleanup, setCleanup] = useState<AppCtx['cleanup']>();
   const [keepDays, setKeepDays] = useState<number>();
   const [editingName, setEditingName] = useState(false);
@@ -271,6 +278,8 @@ export function App() {
                 onOpenModels={() => setModal('models')}
                 onToggleQueue={() => setShowQueue(!showQueue)}
                 queueOpen={showQueue}
+                onToggleChat={() => toggleChat()}
+                chatOpen={showChat}
               />
               {showQueue && <QueuePanel onClose={() => setShowQueue(false)} />}
             </div>
@@ -360,6 +369,9 @@ export function App() {
                   <ListChecks size={15} /> 队列
                   {activeCount > 0 && <span className="pill hot">{activeCount}</span>}
                 </button>
+                <button className={`ghost ${showChat ? 'on' : ''}`} onClick={() => toggleChat()} title="和 AI 对话：写剧本、拆分镜、写提示词">
+                  <MessageCircle size={15} /> 对话
+                </button>
               </header>
 
               <main className="main">
@@ -388,6 +400,8 @@ export function App() {
               }}
             />
           )}
+
+          {showChat && <ChatPanel onClose={() => toggleChat(false)} />}
 
           <DialogHost />
 

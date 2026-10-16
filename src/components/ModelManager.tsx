@@ -25,7 +25,10 @@ interface Draft {
   lastTest?: ProviderView['lastTest'];
 }
 
-const TYPE_LABEL: Record<ProviderType, string> = { volcengine: '火山引擎', relay: '中转站' };
+const TYPE_LABEL: Record<ProviderType, string> = { volcengine: '火山引擎', relay: '中转站', anthropic: 'Anthropic 官方' };
+const DEFAULT_BASE: Partial<Record<ProviderType, string>> = { volcengine: 'https://ark.cn-beijing.volces.com/api/v3', anthropic: 'https://api.anthropic.com/v1' };
+/** 能拉取模型列表的服务商类型 */
+const CAN_LIST = (t: ProviderType) => t === 'relay' || t === 'anthropic';
 const CAP_LABEL: Record<Capability, string> = { text: '文本', image: '图片', video: '视频', audio: '音频' };
 const PROTOCOLS: { id: RelayProtocol; label: string }[] = [
   { id: 'openai-chat', label: 'OpenAI 对话' },
@@ -102,7 +105,7 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
   const [remoteIds, setRemoteIds] = useState<Record<string, string[] | null>>({});
   const loadRemoteIds = (force = false) => {
     const id = draft?.id;
-    if (!draft || draft.type !== 'relay' || !id || (!force && id in remoteIds)) return;
+    if (!draft || !CAN_LIST(draft.type) || !id || (!force && id in remoteIds)) return;
     setRemoteIds((r) => ({ ...r, [id]: null }));
     api
       .remoteModels(id)
@@ -157,9 +160,9 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
     setPull(null);
     setClean({
       id: null,
-      name: quick?.name || (type === 'relay' ? '新中转站' : '火山引擎'),
+      name: quick?.name || (type === 'relay' ? '新中转站' : type === 'anthropic' ? 'Claude' : '火山引擎'),
       type,
-      baseUrl: quick?.baseUrl || (type === 'volcengine' ? 'https://ark.cn-beijing.volces.com/api/v3' : ''),
+      baseUrl: quick?.baseUrl || DEFAULT_BASE[type] || '',
       apiKey: '',
       clearKey: false,
       keyHint: '',
@@ -167,7 +170,10 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
       concurrency: 2,
       refMode: 'base64',
       publicBaseUrl: '',
-      models: (quick?.models || []).map((m) => newModel('relay', 'text', m.remoteModel, m.name)),
+      models:
+        type === 'anthropic'
+          ? [newModel('anthropic', 'text', 'claude-opus-5-5', 'Claude Opus 5.5')]
+          : (quick?.models || []).map((m) => newModel('relay', 'text', m.remoteModel, m.name)),
     });
   };
 
@@ -362,6 +368,9 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                 <button onClick={() => leave(() => add('volcengine'))}>
                   <Plus size={13} /> 火山引擎
                 </button>
+                <button onClick={() => leave(() => add('anthropic'))} title="Claude 官方接口：填 console.anthropic.com 的 key">
+                  <Plus size={13} /> Anthropic
+                </button>
               </div>
               <div className="mm-add-grid quick">
                 {QUICK_ADD.map((q) => (
@@ -406,7 +415,7 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                     <label>接口地址</label>
                     <input
                       value={draft.baseUrl}
-                      placeholder={draft.type === 'relay' ? '例如 https://4sapi.com/v1（一般以 /v1 结尾）' : 'https://ark.cn-beijing.volces.com/api/v3'}
+                      placeholder={draft.type === 'relay' ? '例如 https://4sapi.com/v1（一般以 /v1 结尾）' : DEFAULT_BASE[draft.type]}
                       onChange={(e) => set({ baseUrl: e.target.value })}
                     />
                     <label>API key</label>
@@ -431,7 +440,7 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                   <div className="mm-sec-head">
                     模型 <span className="muted">{draft.models.length}</span>
                     <span className="spacer" />
-                    {draft.type === 'relay' && (
+                    {CAN_LIST(draft.type) && (
                       <button className="ghost small" onClick={pullModels} disabled={saving || pulling} title="保存后，列出这个 key 能用的全部模型，勾选加入">
                         {pulling ? <Loader2 size={13} className="spin" /> : <CloudDownload size={13} />} 拉取模型列表
                       </button>
@@ -441,7 +450,7 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                         <Plus size={13} /> 手动添加 <ChevronDown size={13} />
                       </button>
                       <Popover open={addMenu} onClose={() => setAddMenu(false)} placement="bottom" className="right list-pop add-model-pop">
-                        {ADD_CAPS.map((c) => (
+                        {ADD_CAPS.filter((c) => draft.type !== 'anthropic' || c === 'text').map((c) => (
                           <button key={c} className="list-item" onClick={() => addModel(c)}>
                             {CAP_LABEL[c]}模型
                           </button>
@@ -461,6 +470,8 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                           <div>② 点「拉取模型列表」，选「文本 / 图片 / 视频」，勾选要用的模型</div>
                           <div>③ 点每个模型右边的 🧪 试一下，再点「保存」</div>
                         </>
+                      ) : draft.type === 'anthropic' ? (
+                        <div>点「拉取模型列表」或「手动添加 → 文本模型」，模型 ID 例如 claude-opus-5-5</div>
                       ) : (
                         <div>点「手动添加」，填方舟控制台里的模型 ID</div>
                       )}
@@ -484,7 +495,7 @@ export function ModelManager({ onClose }: { onClose: () => void }) {
                                 <input type="checkbox" checked={m.enabled} onChange={(e) => setModel(i, { enabled: e.target.checked })} />
                               </label>
                               <input value={m.name} placeholder="界面上显示的名字" onChange={(e) => setModel(i, { name: e.target.value })} />
-                              {draft.type === 'relay' && draft.id ? (
+                              {CAN_LIST(draft.type) && draft.id ? (
                                 // 中转站：可以从这个 key 能用的模型里下拉选，也能手填；选中后显示名空着就一起填上
                                 <ComboInput
                                   value={m.remoteModel}

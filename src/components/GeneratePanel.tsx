@@ -352,9 +352,9 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
       </div>
 
       <div className="bar">
-        <span className="chip-wrap">
-          <button className="sel" onClick={() => setPop(pop === 'model' ? '' : 'model')}>
-            <Zap size={14} /> {model?.name} <ChevronDown size={13} />
+        <span className="chip-wrap shrink">
+          <button className="sel" title={model?.name} onClick={() => setPop(pop === 'model' ? '' : 'model')}>
+            <Zap size={14} /> <span className="sel-text">{model?.name}</span> <ChevronDown size={13} />
           </button>
           <Popover open={pop === 'model'} onClose={() => setPop('')} className="list-pop">
             {list.map((m) => (
@@ -392,9 +392,9 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
         {summary && (
           <>
             <span className="divider" />
-            <span className="chip-wrap">
-              <button className="sel" onClick={() => setPop(pop === 'params' ? '' : 'params')}>
-                {summary}
+            <span className="chip-wrap shrink">
+              <button className="sel" title={summary} onClick={() => setPop(pop === 'params' ? '' : 'params')}>
+                <span className="sel-text">{summary}</span>
                 {hasAudio && (params.generate_audio ? <Volume2 size={14} /> : <VolumeX size={14} />)}
                 <ChevronDown size={13} />
               </button>
