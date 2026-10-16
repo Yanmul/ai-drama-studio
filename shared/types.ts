@@ -119,6 +119,8 @@ export interface RefInput {
   file: string; // 工作文件夹里的相对路径
   role: RefRole;
   characterId?: string;
+  /** 用的是设定的哪张图（图的备注，比如「校服」），会带进提示词 */
+  variant?: string;
 }
 
 export interface GenerateRequest {
@@ -178,6 +180,8 @@ export interface Version {
   jobId?: string;
   createdAt: string;
   label?: string;
+  /** 从设定库放进来的图：是那个设定的哪一张（图的备注，比如「校服」） */
+  variant?: string;
 }
 
 /** 节点下方生成面板的状态 */
@@ -245,11 +249,24 @@ export interface Episode {
   title: string;
 }
 
+/** 设定库里的类别：角色 / 场景 / 道具 */
+export type SettingKind = 'character' | 'scene' | 'prop';
+
+/** 设定的一张图（多角度、多表情、不同服装……），note 写这张是什么，比如「校服」「侧面」 */
+export interface SettingImage {
+  file: string; // 相对工作文件夹
+  note?: string;
+}
+
+/** 设定库里的一项（历史原因类型名叫 Character；没有 kind 的是旧数据，按角色算） */
 export interface Character {
   id: string;
+  kind?: SettingKind;
   name: string;
   description: string;
-  image?: string; // 相对工作文件夹
+  /** 主图（= images[0]），旧数据只有这一张 */
+  image?: string;
+  images?: SettingImage[];
   createdAt: string;
 }
 

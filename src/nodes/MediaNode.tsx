@@ -6,7 +6,7 @@ import { AlertTriangle, Camera, ChevronLeft, ChevronRight, Download, FileText, I
 import type { NodeData, Version } from '../../shared/types';
 import { api, fileUrl } from '../api';
 import { useApp, useCanvas, useNodeJobs } from '../context';
-import { KIND_LABEL, fileKind, newId, shownVersion } from '../lib';
+import { KIND_LABEL, SETTING_WORD, fileKind, newId, settingImages, settingKind, shownVersion } from '../lib';
 import { GeneratePanel } from '../components/GeneratePanel';
 import { Lightbox } from '../components/Lightbox';
 import { Popover } from '../components/Popover';
@@ -54,7 +54,8 @@ function grabAt(src: string, at: 'first' | 'last'): Promise<{ blob: Blob; t: num
 
 function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
   const { updateNodeData, getNode, getNodes } = useReactFlow();
-  const { project, episode, toast, keepDays } = useApp();
+  const { project, episode, toast, keepDays, characters } = useApp();
+  const setting = data.characterId ? characters.find((c) => c.id === data.characterId) : undefined;
   const { expandScript, addNode } = useCanvas();
   const [editingTitle, setEditingTitle] = useState(false);
   const [dims, setDims] = useState('');
@@ -167,7 +168,9 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
   };
   // 自动清理：没定稿的生成 / 上传文件几天后会被删（角色图、资产库里的不会）
   const cleanupLeft = (() => {
-    if (!keepDays || !v?.file || starred || !v.file.startsWith('projects/') || (data.characterId && v.label === '角色库')) return undefined;
+    // 设定库里的图不会被清理
+    const inSettings = setting && settingImages(setting).some((img) => img.file === v?.file);
+    if (!keepDays || !v?.file || starred || !v.file.startsWith('projects/') || inSettings) return undefined;
     const age = (Date.now() - Date.parse(v.createdAt)) / 86_400_000;
     return Number.isFinite(age) ? Math.max(0, keepDays - age) : undefined;
   })();
@@ -223,8 +226,8 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
           </span>
         )}
         {data.characterId && (
-          <span className="badge" title="角色定妆图：连到哪里，就把角色外形描述带到哪里">
-            <UserRound size={11} /> 角色
+          <span className="badge" title="设定库里的图：连到哪里，就把它的描述带到哪里">
+            <UserRound size={11} /> {SETTING_WORD[settingKind(setting)]}
           </span>
         )}
         <span className="spacer" />

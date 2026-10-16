@@ -106,7 +106,7 @@ export function App() {
         setProject(p);
         setEpisodes(es);
         setEpisode(es.find((e) => e.id === route.eid) || es[0]);
-        api.characters(p.id).then(setCharacters).catch((e) => toast(`读取角色库失败：${e.message}`, 'error'));
+        api.characters(p.id).then(setCharacters).catch((e) => toast(`读取设定库失败：${e.message}`, 'error'));
         api
           .jobs(p.id)
           .then((pj) => setJobs((prev) => [...pj, ...prev.filter((x) => !pj.some((y) => y.id === x.id))]))

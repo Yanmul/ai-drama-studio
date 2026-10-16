@@ -19,11 +19,12 @@ import {
   VolumeX,
   Zap,
 } from 'lucide-react';
-import type { NodeData, ParamDef } from '../../shared/types';
+import type { Character, NodeData, ParamDef, SettingImage } from '../../shared/types';
+import { SettingPicker } from './SettingPicker';
 import { api, fileUrl } from '../api';
 import { useApp, useCanvas, useNodeJobs } from '../context';
 import { buildRequest, collectInputs, estimateCost } from '../inputs';
-import { CAMERA_MOVES, KIND_CAP, KIND_LABEL, defaultParams, fileKind } from '../lib';
+import { CAMERA_MOVES, KIND_CAP, KIND_LABEL, SETTING_WORD, defaultParams, fileKind, settingImages, settingKind } from '../lib';
 import { Popover } from './Popover';
 
 const PLACEHOLDER: Record<string, string> = {
@@ -142,13 +143,13 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
   const node = getNode(nodeId);
   const leftOf = (dy = 0) => ({ x: (node?.position.x || 0) - 380, y: (node?.position.y || 0) + dy });
 
-  const addCharacter = (cid: string) => {
-    const c = characters.find((x) => x.id === cid);
-    if (!c) return;
+  // 从设定库放一个设定进来（可以指定用哪一张图），连到这个节点
+  const addSetting = (c: Character, img?: SettingImage) => {
+    const pickImg = img || settingImages(c)[0];
     addNode('image', leftOf(media.length * 60), {
-      title: `${c.name}（角色）`,
+      title: `${c.name}${pickImg?.note ? ` · ${pickImg.note}` : ''}（${SETTING_WORD[settingKind(c)]}）`,
       characterId: c.id,
-      version: c.image ? { kind: 'image', file: c.image, label: '角色库' } : undefined,
+      version: pickImg ? { kind: 'image', file: pickImg.file, label: '设定库', variant: pickImg.note || undefined } : undefined,
       connectTo: nodeId,
     });
     setPop('');
@@ -225,20 +226,11 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
         {data.kind !== 'text' && data.kind !== 'audio' && (
           <>
             <span className="chip-wrap">
-              <button className="chip" onClick={() => setPop(pop === 'chars' ? '' : 'chars')} title="从角色库挑一个角色，把定妆图连进来">
-                <ShieldCheck size={14} /> 角色库
+              <button className="chip" onClick={() => setPop(pop === 'chars' ? '' : 'chars')} title="从设定库挑角色、场景、道具，把参考图连进来，描述自动带进提示词">
+                <ShieldCheck size={14} /> 设定库
               </button>
-              <Popover open={pop === 'chars'} onClose={() => setPop('')} placement="bottom" className="list-pop">
-                {characters.length === 0 && <div className="muted pad">角色库还是空的</div>}
-                {characters.map((c) => (
-                  <button key={c.id} className="list-item" onClick={() => addCharacter(c.id)}>
-                    {c.image ? <img src={fileUrl(c.image)} /> : <span className="thumb-empty" />}
-                    <span>{c.name}</span>
-                  </button>
-                ))}
-                <button className="list-item muted" onClick={() => (setPop(''), openCharacters())}>
-                  管理角色库…
-                </button>
+              <Popover open={pop === 'chars'} onClose={() => setPop('')} placement="bottom" className="list-pop setting-pop">
+                <SettingPicker settings={characters} onPick={addSetting} onManage={() => (setPop(''), openCharacters())} />
               </Popover>
             </span>
             {data.kind === 'video' && (
@@ -293,7 +285,7 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
                   {ROLE_LABEL[m.role]}
                 </button>
               )}
-              {m.characterId && <span className="ref-char">角色</span>}
+              {m.characterId && <span className="ref-char">{SETTING_WORD[settingKind(characters.find((c) => c.id === m.characterId))]}</span>}
             </div>
           ))}
           {chars.map((c) => (

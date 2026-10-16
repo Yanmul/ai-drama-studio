@@ -14,6 +14,7 @@ export async function loadCharacter(pid: string, cid: string): Promise<Character
 }
 
 const KIND_ZH = { image: '图', video: '视频', audio: '音频' } as const;
+const KIND_WORD = { character: '角色', scene: '场景', prop: '道具' } as const;
 
 export async function buildPrompt(req: GenerateRequest, adapter: Adapter, model: ProviderModelConfig): Promise<string> {
   const counters = { image: 0, video: 0, audio: 0 };
@@ -26,12 +27,12 @@ export async function buildPrompt(req: GenerateRequest, adapter: Adapter, model:
     labelOf.set(`@${KIND_ZH[r.kind]}${n}`, label);
     if (r.characterId) {
       const c = await loadCharacter(req.projectId, r.characterId);
-      if (c) characterLines.push(`${label}是角色「${c.name}」${c.description ? `：${c.description}` : ''}`);
+      if (c) characterLines.push(`${label}是${KIND_WORD[c.kind || 'character']}「${c.name}」${r.variant ? `（${r.variant}）` : ''}${c.description ? `：${c.description}` : ''}`);
     }
   }
   for (const cid of req.characterIds || []) {
     const c = await loadCharacter(req.projectId, cid);
-    if (c && !characterLines.some((l) => l.includes(`「${c.name}」`))) characterLines.push(`角色「${c.name}」${c.description ? `：${c.description}` : ''}`);
+    if (c && !characterLines.some((l) => l.includes(`「${c.name}」`))) characterLines.push(`${KIND_WORD[c.kind || 'character']}「${c.name}」${c.description ? `：${c.description}` : ''}`);
   }
   const swap = (s: string) => s.replace(/@(图|视频|音频)(\d+)/g, (m) => labelOf.get(m) || m);
   const user = swap(req.prompt || '');

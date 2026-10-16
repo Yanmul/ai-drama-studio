@@ -61,7 +61,10 @@ async function doCleanup() {
   for (const pid of await listDirs(paths.projects())) {
     // —— 要保留的文件：角色图 + 所有画布里的定稿版本 ——
     const keep = new Set<string>();
-    for (const c of await listCharacters(pid)) if (c.image) keep.add(c.image);
+    for (const c of await listCharacters(pid)) {
+      if (c.image) keep.add(c.image);
+      for (const img of c.images || []) keep.add(img.file); // 设定库里的每一张图都保留
+    }
     const episodes = await listDirs(paths.episodes(pid));
     const canvases = new Map<string, CanvasFile>();
     for (const eid of episodes) {

@@ -227,11 +227,15 @@ export async function listCharacters(pid: string): Promise<Character[]> {
 }
 
 export async function saveCharacter(pid: string, c: Partial<Character> & { name: string }): Promise<Character> {
+  // 多张图：旧数据只有 image；新数据以 images 为准，image 跟着 images[0] 走
+  const images = (c.images?.length ? c.images : c.image ? [{ file: c.image }] : []).filter((x) => x?.file);
   const full: Character = {
     id: c.id || newId('char_'),
+    kind: c.kind === 'scene' || c.kind === 'prop' ? c.kind : 'character',
     name: c.name,
     description: c.description || '',
-    image: c.image,
+    image: images[0]?.file,
+    images,
     createdAt: c.createdAt || nowIso(),
   };
   await writeJson(path.join(paths.characters(pid), `${safe(full.id)}.json`), full);

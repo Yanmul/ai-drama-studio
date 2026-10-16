@@ -4,6 +4,8 @@ import { ChevronRight, Clock, FileText, Image as ImageIcon, Music, Search, Scrol
 import type { NodeKind } from '../../shared/types';
 import { fileUrl } from '../api';
 import { useApp } from '../context';
+import { SETTING_WORD, settingImages, settingKind } from '../lib';
+import { SettingPicker } from './SettingPicker';
 
 export interface AddMenuAction {
   kind?: NodeKind;
@@ -11,6 +13,8 @@ export interface AddMenuAction {
   text?: string;
   characterId?: string;
   characterImage?: string;
+  /** 设定的哪一张图（备注） */
+  variant?: string;
   upload?: boolean;
   history?: boolean;
 }
@@ -45,7 +49,7 @@ export function AddNodeMenu({ x, y, onPick, onClose }: { x: number; y: number; o
     { key: 'video', icon: Video, label: '视频', act: { kind: 'video' } },
     { key: 'audio', icon: Music, label: '音频', act: { kind: 'audio' } },
     { key: 'script', icon: ScrollText, label: '脚本', sub: 'script' },
-    { key: 'library', icon: Shapes, label: '素材库', sub: 'library' },
+    { key: 'library', icon: Shapes, label: '设定库', sub: 'library' },
   ];
   const shown = items.filter((i) => !q || i.label.includes(q));
 
@@ -92,20 +96,21 @@ export function AddNodeMenu({ x, y, onPick, onClose }: { x: number; y: number; o
           )}
           {sub === i.sub && i.sub === 'library' && (
             <div className="am-sub">
-              <div className="am-group">角色</div>
-              {characters.map((c) => (
-                <button
-                  key={c.id}
-                  className="am-row"
-                  onClick={() => onPick({ kind: 'image', title: `${c.name}（角色）`, characterId: c.id, characterImage: c.image })}
-                >
-                  {c.image ? <img className="am-thumb" src={fileUrl(c.image)} /> : <span className="am-thumb" />}
-                  <span>{c.name}</span>
-                </button>
-              ))}
-              <button className="am-row muted" onClick={() => (onClose(), openCharacters())}>
-                管理角色库…
-              </button>
+              <SettingPicker
+                settings={characters}
+                rowClass="am-row"
+                onManage={() => (onClose(), openCharacters())}
+                onPick={(c, img) => {
+                  const pickImg = img || settingImages(c)[0];
+                  onPick({
+                    kind: 'image',
+                    title: `${c.name}${pickImg?.note ? ` · ${pickImg.note}` : ''}（${SETTING_WORD[settingKind(c)]}）`,
+                    characterId: c.id,
+                    characterImage: pickImg?.file,
+                    variant: pickImg?.note || undefined,
+                  });
+                }}
+              />
             </div>
           )}
         </div>

@@ -1,12 +1,12 @@
 // 角色库、生成历史、项目设置三个弹窗
 import { useEffect, useRef, useState } from 'react';
-import { Plus, Trash2, X } from 'lucide-react';
+import { Loader2, Plus, Star, Trash2, X } from 'lucide-react';
 import { confirmDialog } from './Dialog';
 import { Select } from './Select';
-import type { Asset, Character, Project } from '../../shared/types';
+import type { Asset, Character, Project, SettingImage, SettingKind } from '../../shared/types';
 import { api, fileUrl } from '../api';
 import { useApp } from '../context';
-import { fileKind, fmtTime } from '../lib';
+import { SETTING_WORD, fileKind, fmtTime, settingImages, settingKind } from '../lib';
 
 function Modal({ title, sub, onClose, children, wide }: { title: string; sub?: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
   return (
@@ -26,23 +26,36 @@ function Modal({ title, sub, onClose, children, wide }: { title: string; sub?: s
   );
 }
 
-// —— 角色库 ——
+// —— 设定库：角色 / 场景 / 道具，每个可以放多张图 ——
+const KIND_TABS: { kind: SettingKind; label: string; descHint: string; nameHint: string }[] = [
+  { kind: 'character', label: '角色', nameHint: '比如：胡柏冰（少年）', descHint: '外形：年龄、体型、脸型、发型、常穿的衣服……越具体，人物越稳定' },
+  { kind: 'scene', label: '场景', nameHint: '比如：教室（午后）', descHint: '地点、时间、天气、光线、陈设、色调……' },
+  { kind: 'prop', label: '道具', nameHint: '比如：黑板擦', descHint: '颜色、材质、大小、形状、细节……' },
+];
+
 export function CharacterLibrary({ onClose }: { onClose: () => void }) {
   const { project, characters, refreshCharacters, toast } = useApp();
-  const [sel, setSelRaw] = useState<Partial<Character> | null>(characters[0] || null);
-  const savedSnap = useRef(JSON.stringify(characters[0] || null));
+  const [kind, setKind] = useState<SettingKind>('character');
+  const list = characters.filter((c) => settingKind(c) === kind);
+  const first = characters.find((c) => settingKind(c) === 'character') || null;
+  const [sel, setSelRaw] = useState<Partial<Character> | null>(first);
+  const savedSnap = useRef(JSON.stringify(first));
+  const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const tab = KIND_TABS.find((t) => t.kind === kind)!;
   // 切换 / 关闭前，有没保存的改动就先问一声
   const pick = (c: Partial<Character> | null) => {
-    setSelRaw(c);
-    savedSnap.current = JSON.stringify(c);
+    // 编辑时统一用 images（旧数据只有 image）
+    const v = c ? { ...c, images: settingImages(c as Character) } : null;
+    setSelRaw(v);
+    savedSnap.current = JSON.stringify(v);
   };
   const setSel = setSelRaw;
   const leave = async (then: () => void) => {
     if (sel && JSON.stringify(sel) !== savedSnap.current) {
       const ok = await confirmDialog({
         title: '放弃没保存的修改？',
-        message: `角色「${sel.name || '新角色'}」改了还没保存。`,
+        message: `「${sel.name || '新设定'}」改了还没保存。`,
         okText: '放弃修改',
         cancelText: '继续编辑',
         danger: true,
@@ -51,52 +64,121 @@ export function CharacterLibrary({ onClose }: { onClose: () => void }) {
     }
     then();
   };
+  useEffect(() => {
+    pick(first);
+  }, []);
   if (!project) return null;
 
+  const images = sel?.images || [];
+  const setImages = (next: SettingImage[]) => setSel((s) => (s ? { ...s, images: next } : s));
+
   const save = async () => {
-    if (!sel?.name?.trim()) return toast('先给角色起个名字', 'error');
+    if (!sel?.name?.trim()) return toast(`先给${SETTING_WORD[settingKind(sel as Character)]}起个名字`, 'error');
     try {
-      const c = await api.saveCharacter(project.id, sel);
+      const c = await api.saveCharacter(project.id, { ...sel, image: sel.images?.[0]?.file });
       pick(c);
       refreshCharacters();
-      toast('已保存。改了外形描述，之后的生成都会用新的');
+      toast('已保存。改了描述，之后的生成都会用新的');
     } catch (e: any) {
       toast(e.message, 'error');
     }
   };
 
+  const upload = async (files: File[]) => {
+    const forId = sel?.id; // 记下是给哪个设定传的：上传途中切走了就不落到别的设定上
+    setUploading(true);
+    try {
+      const ups: Awaited<ReturnType<typeof api.upload>>[] = [];
+      for (const f of files) ups.push(await api.upload(project.id, f));
+      setSel((s) => (s && s.id === forId ? { ...s, images: [...(s.images || []), ...ups.filter((u) => u.kind === 'image').map((u) => ({ file: u.file }))] } : s));
+    } catch (err: any) {
+      toast(err.message, 'error');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
-    <Modal title="角色库" sub="角色的外形描述会自动拼进连到的每个生成节点；定妆图当参考图" onClose={() => leave(onClose)} wide>
-      <div className="mm">
+    <Modal title="设定库" sub="角色、场景、道具：描述会自动拼进连到的生成节点，图当参考图；一个设定可以放多张图（多角度、表情、服装）" onClose={() => leave(onClose)} wide>
+      <div className="mm setting-lib">
         <div className="mm-list">
-          {characters.map((c) => (
-            <button key={c.id} className={`mm-item ${sel?.id === c.id ? 'on' : ''}`} onClick={() => sel?.id !== c.id && leave(() => pick(c))}>
-              {c.image ? <img className="char-thumb" src={fileUrl(c.image)} /> : <span className="char-thumb" />}
-              <span className="mm-name">{c.name}</span>
-            </button>
-          ))}
+          <div className="seg setting-tabs">
+            {KIND_TABS.map((t) => (
+              <button
+                key={t.kind}
+                className={kind === t.kind ? 'on' : ''}
+                onClick={() =>
+                  t.kind !== kind &&
+                  leave(() => {
+                    setKind(t.kind);
+                    pick(characters.find((c) => settingKind(c) === t.kind) || null);
+                  })
+                }
+              >
+                {t.label} <span className="muted">{characters.filter((c) => settingKind(c) === t.kind).length}</span>
+              </button>
+            ))}
+          </div>
+          {list.map((c) => {
+            const imgs = settingImages(c);
+            return (
+              <button key={c.id} className={`mm-item ${sel?.id === c.id ? 'on' : ''}`} onClick={() => sel?.id !== c.id && leave(() => pick(c))}>
+                {imgs[0] ? <img className="char-thumb" src={fileUrl(imgs[0].file)} /> : <span className="char-thumb" />}
+                <span className="mm-main">
+                  <span className="mm-name">{c.name}</span>
+                  <span className="mm-sub">{imgs.length ? `${imgs.length} 张图` : '还没有图，只带描述'}</span>
+                </span>
+              </button>
+            );
+          })}
+          {list.length === 0 && <div className="muted pad">还没有{tab.label}</div>}
           <div className="mm-add">
-            <button onClick={() => leave(() => pick({ name: '', description: '' }))}>
-              <Plus size={13} /> 新角色
+            <button onClick={() => leave(() => pick({ kind, name: '', description: '', images: [] }))}>
+              <Plus size={13} /> 新{tab.label}
             </button>
           </div>
         </div>
         {sel && (
           <div className="mm-form">
-            <div className="char-edit">
-              <div className="char-img" onClick={() => fileRef.current?.click()}>
-                {sel.image ? <img src={fileUrl(sel.image)} /> : <div className="muted">点击上传定妆图</div>}
-              </div>
-              <div className="form-grid one">
-                <label>名字</label>
-                <input value={sel.name || ''} placeholder="比如：胡柏冰（少年）" onChange={(e) => setSel({ ...sel, name: e.target.value })} />
-                <label>外形描述</label>
-                <textarea
-                  rows={8}
-                  value={sel.description || ''}
-                  placeholder="偏胖，圆脸，中分……越具体，人物越稳定"
-                  onChange={(e) => setSel({ ...sel, description: e.target.value })}
-                />
+            <div className="form-grid one">
+              <label>名字</label>
+              <input value={sel.name || ''} placeholder={KIND_TABS.find((t) => t.kind === settingKind(sel as Character))!.nameHint} onChange={(e) => setSel({ ...sel, name: e.target.value })} />
+              <label>描述（自动拼进提示词）</label>
+              <textarea
+                rows={4}
+                value={sel.description || ''}
+                placeholder={KIND_TABS.find((t) => t.kind === settingKind(sel as Character))!.descHint}
+                onChange={(e) => setSel({ ...sel, description: e.target.value })}
+              />
+              <label>
+                参考图 <span className="muted">第一张是主图；放到画布时可以选用哪一张，备注会一起带进提示词</span>
+              </label>
+              <div className="set-images">
+                {images.map((img, i) => (
+                  <div key={img.file + i} className={`set-img ${i === 0 ? 'main' : ''}`}>
+                    <img src={fileUrl(img.file)} />
+                    {i === 0 && <span className="set-main-tag">主图</span>}
+                    <div className="set-img-tools">
+                      {i > 0 && (
+                        <button title="设为主图" onClick={() => setImages([img, ...images.filter((_, j) => j !== i)])}>
+                          <Star size={13} />
+                        </button>
+                      )}
+                      <button title="删掉这张" onClick={() => setImages(images.filter((_, j) => j !== i))}>
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                    <input
+                      value={img.note || ''}
+                      placeholder="备注：正面 / 侧面 / 校服…"
+                      onChange={(e) => setImages(images.map((x, j) => (j === i ? { ...x, note: e.target.value } : x)))}
+                    />
+                  </div>
+                ))}
+                <button className="set-img add" onClick={() => fileRef.current?.click()} disabled={uploading}>
+                  {uploading ? <Loader2 size={20} className="spin" /> : <Plus size={22} />}
+                  <span>{uploading ? '上传中…' : '上传图片（可多选）'}</span>
+                </button>
               </div>
             </div>
             <div className="mm-actions">
@@ -104,7 +186,7 @@ export function CharacterLibrary({ onClose }: { onClose: () => void }) {
                 <button
                   className="danger"
                   onClick={async () => {
-                    if (!(await confirmDialog({ title: `删除角色「${sel.name}」？`, okText: '删除', danger: true }))) return;
+                    if (!(await confirmDialog({ title: `删除「${sel.name}」？`, message: '画布上已经放好的节点不受影响。', okText: '删除', danger: true }))) return;
                     try {
                       await api.deleteCharacter(project.id, sel.id!);
                     } catch (e: any) {
@@ -118,7 +200,7 @@ export function CharacterLibrary({ onClose }: { onClose: () => void }) {
                 </button>
               )}
               <span className="spacer" />
-              <span className="muted">放到画布：在节点面板点「角色库」，或在添加菜单的「素材库」里选</span>
+              <span className="muted">放到画布：生成面板点「设定库」，或右键添加菜单里的「设定库」</span>
               <button className="primary" onClick={save}>
                 保存
               </button>
@@ -127,18 +209,12 @@ export function CharacterLibrary({ onClose }: { onClose: () => void }) {
               ref={fileRef}
               type="file"
               hidden
+              multiple
               accept="image/*"
-              onChange={async (e) => {
-                const f = e.target.files?.[0];
+              onChange={(e) => {
+                const fs = [...(e.target.files || [])];
                 e.target.value = '';
-                if (!f) return;
-                const forId = sel?.id; // 记下是给哪个角色传的
-                try {
-                  const up = await api.upload(project.id, f);
-                  setSel((s) => (s && s.id === forId ? { ...s, image: up.file } : s));
-                } catch (err: any) {
-                  toast(err.message, 'error');
-                }
+                if (fs.length) upload(fs);
               }}
             />
           </div>

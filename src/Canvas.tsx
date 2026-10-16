@@ -722,7 +722,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
         title: a.title,
         text: a.text,
         characterId: a.characterId,
-        version: a.characterImage ? { kind: 'image', file: a.characterImage, label: '角色库' } : undefined,
+        version: a.characterImage ? { kind: 'image', file: a.characterImage, label: '设定库', variant: a.variant } : undefined,
         ...link,
       });
     }
@@ -743,7 +743,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     const t = rf.getNode(c.target) as FlowNode | undefined;
     const s = rf.getNode(c.source) as FlowNode | undefined;
     if (!t || !s) return false;
-    if (t.data.kind === 'script' && !s.data.characterId) return false; // 脚本只接角色图
+    if (t.data.kind === 'script' && !s.data.characterId) return false; // 脚本只接设定库里的图（角色 / 场景 / 道具）
     return !rf.getEdges().some((e) => e.source === c.source && e.target === c.target);
   }, []);
 
@@ -1029,7 +1029,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           <button title="添加节点（也可以双击画布空白处）" onClick={() => setMenu(centerScreen())}>
             <Plus size={20} />
           </button>
-          <button title="角色库" onClick={app.openCharacters}>
+          <button title="设定库：角色、场景、道具" onClick={app.openCharacters}>
             <UsersRound size={18} />
           </button>
           <button

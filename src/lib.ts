@@ -1,4 +1,4 @@
-import type { Capability, GenState, ModelInfo, NodeData, NodeKind, Version } from '../shared/types';
+import type { Capability, Character, GenState, ModelInfo, NodeData, NodeKind, SettingImage, SettingKind, Version } from '../shared/types';
 
 export const newId = (p = 'n_') => p + Math.random().toString(36).slice(2, 10);
 
@@ -93,3 +93,9 @@ export const CAMERA_MOVES = [
   '升降镜头',
   '一镜到底',
 ];
+
+// —— 设定库（角色 / 场景 / 道具） ——
+export const SETTING_WORD: Record<SettingKind, string> = { character: '角色', scene: '场景', prop: '道具' };
+export const settingKind = (c?: Character): SettingKind => c?.kind || 'character';
+/** 设定的全部图（旧数据只有 image 一张） */
+export const settingImages = (c?: Character): SettingImage[] => (c?.images?.length ? c.images : c?.image ? [{ file: c.image }] : []);
