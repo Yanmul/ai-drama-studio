@@ -287,6 +287,8 @@ export interface CanvasFile {
 export type ServerEvent =
   | { type: 'job'; job: Job }
   | { type: 'hello' }
+  /** 心跳：前端很久收不到任何消息就认为连接断了，自己重连 */
+  | { type: 'ping' }
   /** 定时清理删掉了这些文件（相对工作文件夹的路径） */
   | { type: 'cleanup'; deleted: string[]; files: number; bytes: number };
 

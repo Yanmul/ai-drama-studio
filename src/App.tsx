@@ -124,48 +124,89 @@ export function App() {
   const projectIdRef = useRef<string | undefined>(undefined);
   projectIdRef.current = project?.id;
   useEffect(() => {
-    const es = new EventSource('/api/events');
-    es.onmessage = (m) => {
-      let ev: ServerEvent;
-      try {
-        ev = JSON.parse(m.data);
-      } catch {
-        return;
-      }
-      // 每次连上（包括后端重启、电脑睡醒后自动重连）都补拉一次：断线期间完成的任务不会推送过来
-      if (ev.type === 'hello') {
-        const pid = projectIdRef.current;
-        if (pid) {
-          api
-            .jobs(pid)
-            .then((list) => setJobs((prev) => [...list, ...prev.filter((p) => !list.some((j) => j.id === p.id))]))
-            .catch(() => undefined);
+    let es: EventSource | null = null;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let closed = false;
+    let lastSeen = Date.now();
+    const connect = () => {
+      lastSeen = Date.now();
+      es = new EventSource('/api/events');
+      // 后端重启的那一两秒，代理会回 500：浏览器遇到这种情况会彻底放弃、不再自动重连，
+      // 之后完成的任务就收不到了（要刷新才看得到）。所以这里自己重连，连上后 hello 会补拉一次任务
+      es.onerror = () => {
+        if (es?.readyState !== EventSource.CLOSED || closed) return;
+        clearTimeout(retry);
+        retry = setTimeout(connect, 2000);
+      };
+      es.onmessage = (m) => {
+        lastSeen = Date.now();
+        let ev: ServerEvent;
+        try {
+          ev = JSON.parse(m.data);
+        } catch {
+          return;
         }
-        return;
-      }
-      if (ev.type === 'cleanup') {
-        if (ev.files > 0) {
-          setCleanup({ deleted: ev.deleted, at: Date.now() });
-          toast(`已自动清理 ${ev.files} 个 3 天前的文件，释放 ${(ev.bytes / 1024 / 1024).toFixed(1)} MB（定稿和角色图已保留）`);
+        // 每次连上（包括后端重启、电脑睡醒后自动重连）都补拉一次：断线期间完成的任务不会推送过来
+        if (ev.type === 'hello') {
+          const pid = projectIdRef.current;
+          if (pid) {
+            api
+              .jobs(pid)
+              .then((list) => setJobs((prev) => [...list, ...prev.filter((p) => !list.some((j) => j.id === p.id))]))
+              .catch(() => undefined);
+          }
+          return;
         }
-        return;
-      }
-      if (ev.type !== 'job') return;
-      const j = ev.job;
-      setJobs((prev) => {
-        const i = prev.findIndex((p) => p.id === j.id);
-        if (i < 0) return [j, ...prev];
-        const next = prev.slice();
-        next[i] = j;
-        return next;
-      });
-      if (j.status === 'failed') noteFailure(j.error || '未知错误');
+        if (ev.type === 'cleanup') {
+          if (ev.files > 0) {
+            setCleanup({ deleted: ev.deleted, at: Date.now() });
+            toast(`已自动清理 ${ev.files} 个 3 天前的文件，释放 ${(ev.bytes / 1024 / 1024).toFixed(1)} MB（定稿和角色图已保留）`);
+          }
+          return;
+        }
+        if (ev.type !== 'job') return;
+        const j = ev.job;
+        setJobs((prev) => {
+          const i = prev.findIndex((p) => p.id === j.id);
+          if (i < 0) return [j, ...prev];
+          const next = prev.slice();
+          next[i] = j;
+          return next;
+        });
+        if (j.status === 'failed') noteFailure(j.error || '未知错误');
+      };
     };
-    return () => es.close();
+    connect();
+    // 后端每 15 秒发一次心跳；40 秒都没收到 = 连接已经死了（代理没把断开告诉浏览器），重连
+    const watchdog = setInterval(() => {
+      if (Date.now() - lastSeen < 40_000) return;
+      es?.close();
+      clearTimeout(retry);
+      connect();
+    }, 10_000);
+    return () => {
+      closed = true;
+      clearTimeout(retry);
+      clearInterval(watchdog);
+      es?.close();
+    };
   }, []);
 
   const projectJobs = useMemo(() => jobs.filter((j) => j.request.projectId === project?.id), [jobs, project?.id]);
   const activeCount = projectJobs.filter((j) => j.status === 'queued' || j.status === 'running').length;
+
+  // 保险：有任务在跑时每 20 秒补拉一次状态（万一推送断了没发现，也不用刷新页面）
+  useEffect(() => {
+    const pid = project?.id;
+    if (!pid || activeCount === 0) return;
+    const t = setInterval(() => {
+      api
+        .jobs(pid)
+        .then((list) => setJobs((prev) => [...list, ...prev.filter((p) => !list.some((j) => j.id === p.id))]))
+        .catch(() => undefined);
+    }, 20_000);
+    return () => clearInterval(t);
+  }, [project?.id, activeCount]);
 
   // 节点按自己的 id 从这里订阅任务（见 context.ts 的 jobStore）
   useEffect(() => jobStore.set(projectJobs), [projectJobs]);

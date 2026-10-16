@@ -303,7 +303,9 @@ app.get('/api/events', (req, reply) => {
   const send = (e: ServerEvent) => reply.raw.write(`data: ${JSON.stringify(e)}\n\n`);
   send({ type: 'hello' });
   events.on('event', send);
-  const ping = setInterval(() => reply.raw.write(': ping\n\n'), 25_000);
+  // 用正式消息当心跳（注释行前端收不到）：开发模式下后端重启时，代理不会断开浏览器那头的连接，
+  // 前端只能靠「很久没收到心跳」发现连接已经死了
+  const ping = setInterval(() => send({ type: 'ping' }), 15_000);
   req.raw.on('close', () => {
     clearInterval(ping);
     events.off('event', send);
