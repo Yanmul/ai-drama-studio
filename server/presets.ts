@@ -69,14 +69,10 @@ export const PRESETS: Record<string, Preset> = {
     label: 'OpenAI 格式生图',
     modes: imageModes,
     params: [
-      // 2K / 4K：OpenAI 官方只认前三档，部分中转站（如 AI派，单边最大 4096）支持更大，不支持的会报错
-      {
-        key: 'size',
-        label: '尺寸',
-        type: 'select',
-        options: ['1536x1024', '1024x1536', '1024x1024', '2048x1152', '1152x2048', '2048x2048', '3840x2160', '2160x3840', '4096x4096', 'auto'],
-        default: '1536x1024',
-      },
+      // 比例 + 清晰度，实际像素见 openaiImageSize。
+      // OpenAI 官方只认 1K 的 1:1 / 3:2 / 2:3；其余比例和 2K / 4K 要中转站支持（如 AI派，单边最大 4096），不支持会报错
+      { key: 'ratio', label: '比例', type: 'select', options: [...RATIOS_IMAGE, '3:2', '2:3'], default: '16:9' },
+      { key: 'resolution', label: '清晰度', type: 'select', options: ['1K', '2K', '4K'], default: '1K' },
       { key: 'count', label: '张数', type: 'select', options: [1, 2, 3, 4], default: 1, unit: '张' },
       { key: 'quality', label: '质量', type: 'select', options: ['auto', 'high', 'medium', 'low'], default: 'auto', advanced: true },
     ],
@@ -123,6 +119,20 @@ export function getPreset(name: string): Preset {
 }
 
 /** 比例 + 清晰度 → Seedream 要的像素尺寸 */
+/** OpenAI 格式生图：比例 + 清晰度 → 宽x高（都取 16 的倍数，长边 1K=1536 / 2K=2048 / 4K=3840，正方形 1024 / 2048 / 4096） */
+export function openaiImageSize(ratio: string, resolution: string): string {
+  const [rw, rh] = ratio.split(':').map(Number);
+  if (!rw || !rh) return '1024x1024';
+  const r16 = (n: number) => Math.max(16, Math.round(n / 16) * 16);
+  if (rw === rh) {
+    const side = { '1K': 1024, '2K': 2048, '4K': 4096 }[resolution] || 1024;
+    return `${side}x${side}`;
+  }
+  const long = { '1K': 1536, '2K': 2048, '4K': 3840 }[resolution] || 1536;
+  const short = r16((long * Math.min(rw, rh)) / Math.max(rw, rh));
+  return rw > rh ? `${long}x${short}` : `${short}x${long}`;
+}
+
 export function seedreamSize(ratio: string, resolution: string): string {
   const k2: Record<string, string> = {
     '1:1': '2048x2048',

@@ -11,6 +11,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { absFromRel, mimeOf } from '../storage.js';
+import { openaiImageSize } from '../presets.js';
 import type { Adapter, AdapterContext, PollResult, PreparedRequest, SubmitResult } from './types.js';
 import { AdapterError, explainVendorError, httpJson, joinUrl } from './types.js';
 import { arkImage, arkVideoPoll, arkVideoSubmit, refUrl } from './volcengine.js';
@@ -69,8 +70,15 @@ async function openaiChat(ctx: AdapterContext, req: PreparedRequest): Promise<Su
   return { kind: 'done', outputs: [{ kind: 'text', text }] };
 }
 
+/** 尺寸：新的「比例 + 清晰度」优先；老节点只有 size 的照旧 */
+function imageSize(p: PreparedRequest['params']): string | undefined {
+  if (p.ratio || p.resolution) return openaiImageSize(String(p.ratio || '1:1'), String(p.resolution || '1K'));
+  return p.size && p.size !== 'auto' ? String(p.size) : undefined;
+}
+
 async function openaiImages(ctx: AdapterContext, req: PreparedRequest): Promise<SubmitResult> {
   const n = Math.max(1, Math.min(4, Number(req.params.count) || 1));
+  const size = imageSize(req.params);
   const imgs = req.mode === 't2i' ? [] : req.refs.filter((r) => r.kind === 'image');
   let data: any;
   if (imgs.length) {
@@ -78,7 +86,7 @@ async function openaiImages(ctx: AdapterContext, req: PreparedRequest): Promise<
     form.append('model', ctx.model.remoteModel);
     form.append('prompt', req.prompt);
     form.append('n', String(n));
-    if (req.params.size && req.params.size !== 'auto') form.append('size', String(req.params.size));
+    if (size) form.append('size', size);
     if (req.params.quality && req.params.quality !== 'auto') form.append('quality', String(req.params.quality));
     for (const r of imgs) {
       if (r.file.endsWith('.svg')) throw new AdapterError('参考图是演示用的 SVG 示意图，真实模型不认，请换成真实图片');
@@ -89,7 +97,7 @@ async function openaiImages(ctx: AdapterContext, req: PreparedRequest): Promise<
     data = await httpJson<any>(joinUrl(base(ctx), 'images/edits'), { headers: headers(ctx), form, timeoutMs: 300_000 });
   } else {
     const body: Record<string, unknown> = { model: ctx.model.remoteModel, prompt: req.prompt, n };
-    if (req.params.size && req.params.size !== 'auto') body.size = req.params.size;
+    if (size) body.size = size;
     if (req.params.quality && req.params.quality !== 'auto') body.quality = req.params.quality;
     data = await httpJson<any>(joinUrl(base(ctx), 'images/generations'), { headers: headers(ctx), body, timeoutMs: 300_000 });
   }
