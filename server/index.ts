@@ -272,7 +272,7 @@ app.post('/api/projects/:pid/frame', async (req, reply) => {
   const out = path.join(dir, `${newId('frame_')}.png`);
   const args =
     at === 'last'
-      ? ['-y', '-sseof', '-0.6', '-i', src, '-update', '1', '-vsync', '0', out] // 读最后 0.6 秒，一帧帧覆盖，留下的就是最后一帧
+      ? ['-y', '-sseof', '-0.6', '-i', src, '-update', '1', out] // 读最后 0.6 秒，一帧帧覆盖，留下的就是最后一帧（别加 -vsync：新版 ffmpeg 去掉了这个参数，加了会直接报错）
       : at === 'first'
         ? ['-y', '-i', src, '-frames:v', '1', out]
         : ['-y', '-ss', String(Math.max(0, Number(at) || 0)), '-i', src, '-frames:v', '1', out];
@@ -285,7 +285,7 @@ app.post('/api/projects/:pid/frame', async (req, reply) => {
       resolve(false);
     }
   });
-  if (!ok || !fs.existsSync(out)) return reply.status(501).send({ error: '没有 ffmpeg' });
+  if (!ok || !fs.existsSync(out)) return reply.status(501).send({ error: '截帧失败（没有 ffmpeg，或 ffmpeg 读不了这个视频）' });
   return { file: rel(out), kind: 'image' };
 });
 
