@@ -43,6 +43,21 @@ export async function addStyle(input: { name?: string; prompt?: string }): Promi
   return s;
 }
 
+export async function updateStyle(id: string, input: { name?: string; prompt?: string }): Promise<StylePreset> {
+  if (BUILTIN_STYLES.some((s) => s.id === id)) throw new Error('内置风格不能改：可以在它的基础上改描述，存成自己的风格');
+  const list = await custom();
+  const s = list.find((x) => x.id === id);
+  if (!s) throw new Error('这个风格不存在了');
+  const name = (input.name ?? s.name).trim().slice(0, 20);
+  const prompt = (input.prompt ?? s.prompt).trim();
+  if (!name) throw new Error('风格要起个名字');
+  if (!prompt) throw new Error('风格描述是空的');
+  if ([...BUILTIN_STYLES, ...list].some((x) => x.id !== id && x.name === name)) throw new Error(`已经有叫「${name}」的风格了，换个名字`);
+  Object.assign(s, { name, prompt });
+  await writeJson(file(), { styles: list });
+  return s;
+}
+
 export async function deleteStyle(id: string) {
   if (BUILTIN_STYLES.some((s) => s.id === id)) throw new Error('内置风格不能删除');
   await writeJson(file(), { styles: (await custom()).filter((s) => s.id !== id) });

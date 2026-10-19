@@ -70,6 +70,7 @@ export const api = {
   createProject: (name: string, extra: { style?: string; styleId?: string; ratio?: string } = {}) => call<Project>('POST', '/api/projects', { name, ...extra }),
   styles: () => call<StylePreset[]>('GET', '/api/styles'),
   addStyle: (name: string, prompt: string) => call<StylePreset>('POST', '/api/styles', { name, prompt }),
+  updateStyle: (id: string, patch: { name?: string; prompt?: string }) => call<StylePreset>('PUT', `/api/styles/${id}`, patch),
   deleteStyle: (id: string) => call('DELETE', `/api/styles/${id}`),
   updateProject: (pid: string, patch: Partial<Project>) => call<Project>('PUT', `/api/projects/${pid}`, patch),
   episodes: (pid: string) => call<Episode[]>('GET', `/api/projects/${pid}/episodes`),

@@ -30,7 +30,7 @@ import { ADAPTERS, deleteProvider, listModels, listProviderViews, remoteModels, 
 import { buildPrompt } from './prompt.js';
 import { cleanupStatus, runCleanup, startCleanupSchedule } from './cleanup.js';
 import { stitch } from './stitch.js';
-import { addStyle, deleteStyle, listStyles } from './styles.js';
+import { addStyle, deleteStyle, listStyles, updateStyle } from './styles.js';
 import { createChat, deleteChat, getChat, listChats, sendMessage, updateChat } from './chat.js';
 import { cancelJob, enqueue, events, getJob, listJobs, recover, resumeJob, runQuickText } from './queue.js';
 import { addAssets, deleteAsset, listAssets, renameAsset, type AssetInput } from './assets.js';
@@ -164,6 +164,7 @@ app.delete('/api/projects/:pid/characters/:cid', async (req) => {
 // —— 风格库 ——
 app.get('/api/styles', async () => listStyles());
 app.post('/api/styles', async (req) => addStyle(req.body as any));
+app.put('/api/styles/:id', async (req) => updateStyle((req.params as any).id, req.body as any));
 app.delete('/api/styles/:id', async (req) => {
   await deleteStyle((req.params as any).id);
   return { ok: true };
