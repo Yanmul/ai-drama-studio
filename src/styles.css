@@ -4922,3 +4922,15 @@ input.short {
   padding: 8px 9px 4px;
   font-size: 12px;
 }
+
+/* 导入分镜：接上一条尾帧的提示 */
+.hint.chain-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+}
+.hint.chain-hint .link {
+  margin-left: auto;
+  color: var(--text-3);
+}

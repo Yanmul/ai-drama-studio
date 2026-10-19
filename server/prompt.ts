@@ -20,11 +20,16 @@ export async function buildPrompt(req: GenerateRequest, adapter: Adapter, model:
   const counters = { image: 0, video: 0, audio: 0 };
   const labelOf = new Map<string, string>(); // '@图1' -> '图片1'
   const characterLines: string[] = [];
+  let firstFrameLine = '';
   for (const r of req.refs) {
     counters[r.kind] += 1;
     const n = counters[r.kind];
     const label = adapter.refLabel ? adapter.refLabel(r.kind, n, model) : `${r.kind} ${n}`;
     labelOf.set(`@${KIND_ZH[r.kind]}${n}`, label);
+    // 接上一条尾帧：这一条要从那张图的画面开始
+    if (r.kind === 'image' && req.firstFrameNodeId && r.nodeId === req.firstFrameNodeId) {
+      firstFrameLine = `首帧为${label}：画面从这张图开始，人物位置、景别、光线和它一致，再往下演。`;
+    }
     if (r.characterId) {
       const c = await loadCharacter(req.projectId, r.characterId);
       if (c) characterLines.push(`${label}是${KIND_WORD[c.kind || 'character']}「${c.name}」${r.variant ? `（${r.variant}）` : ''}${c.description ? `：${c.description}` : ''}`);
@@ -43,6 +48,7 @@ export async function buildPrompt(req: GenerateRequest, adapter: Adapter, model:
   }
   const project = await loadProject(req.projectId);
   const parts = [
+    firstFrameLine,
     project?.style && !req.noStyle ? `画风：${project.style}` : '',
     ...inputs,
     ...characterLines,

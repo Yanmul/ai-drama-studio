@@ -1,6 +1,6 @@
 // 「添加节点」菜单（参考 LibTV 截图一）：双击 / 右键画布空白处，或从节点拖线到空白处时弹出。
 import { useEffect, useRef, useState } from 'react';
-import { ChevronRight, Clock, FileText, Image as ImageIcon, Music, Search, ScrollText, Shapes, Upload, Video, Film } from 'lucide-react';
+import { ChevronRight, ClipboardList, Clock, FileText, Image as ImageIcon, Music, Search, ScrollText, Shapes, Upload, Video, Film } from 'lucide-react';
 import type { NodeKind } from '../../shared/types';
 import { fileUrl } from '../api';
 import { useApp } from '../context';
@@ -17,6 +17,8 @@ export interface AddMenuAction {
   variant?: string;
   upload?: boolean;
   history?: boolean;
+  /** 导入 novel-to-seedance 技能导出的分镜 JSON */
+  importStoryboard?: boolean;
 }
 
 const SCRIPT_TEMPLATE = '镜头1：\n\n镜头2：\n\n镜头3：';
@@ -124,6 +126,10 @@ export function AddNodeMenu({ x, y, onPick, onClose }: { x: number; y: number; o
       <button className="am-row" onClick={() => onPick({ history: true })}>
         <Clock size={18} />
         <span>从生成历史选择</span>
+      </button>
+      <button className="am-row" onClick={() => onPick({ importStoryboard: true })} title="导入 novel-to-seedance 技能导出的「E01-片段.json」：一键建好全部片段节点、连好设定库图片（也可以直接把 json 拖进画布）">
+        <ClipboardList size={18} />
+        <span>导入分镜</span>
       </button>
     </div>
   );

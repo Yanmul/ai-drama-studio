@@ -10,6 +10,7 @@ import {
   ChevronDown,
   FileText,
   Languages,
+  Link2,
   Loader2,
   Maximize2,
   Minimize2,
@@ -356,6 +357,17 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
               {t.text.length > 18 ? '…' : ''}
             </div>
           ))}
+        </div>
+      )}
+      {data.chainPrev && (
+        <div className="hint chain-hint">
+          <Link2 size={13} />
+          {srcIds.includes(data.firstFrame || '')
+            ? `首帧接「${(getNode(data.chainPrev)?.data as NodeData | undefined)?.title || '上一条'}」的最后一帧（已连上）`
+            : `要接「${(getNode(data.chainPrev)?.data as NodeData | undefined)?.title || '上一条'}」的最后一帧：它生成好后会自动连上，再生成这条`}
+          <button className="link" onClick={() => updateNodeData(nodeId, { chainPrev: undefined, chainFrom: undefined })} title="不接上一条的尾帧了，这条按自己的提示词开场">
+            不接了
+          </button>
         </div>
       )}
       {unusedRefs > 0 && mode && (

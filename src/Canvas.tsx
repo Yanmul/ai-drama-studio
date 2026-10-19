@@ -19,14 +19,14 @@ import {
 } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Archive, Check, Clock, Hand, History, Loader2, Maximize, Minus, MousePointer2, PanelLeft, Plus, Redo2, RotateCcw, Undo2, UsersRound, X } from 'lucide-react';
-import type { CanvasFile, Episode, Job, NodeData, NodeKind, Project, Version } from '../shared/types';
-import { api } from './api';
+import type { CanvasFile, Episode, Job, NodeData, NodeKind, Project, StoryboardFile, Version } from '../shared/types';
+import { api, fileUrl } from './api';
 import { AddNodeMenu, type AddMenuAction } from './components/AddNodeMenu';
 import { CanvasContext, useApp, useJobs, type CanvasCtx } from './context';
 import { buildRequest, estimateCostNumber } from './inputs';
 import { pruneDeletedVersions } from '../shared/cleanup';
-import { KIND_CAP, KIND_LABEL, emptyGen, makeNodeData, newId, pickModel } from './lib';
-import { MediaNode } from './nodes/MediaNode';
+import { KIND_CAP, KIND_LABEL, SETTING_WORD, activeVersion, emptyGen, fileKind, makeNodeData, newId, pickModel, settingImages, settingKind } from './lib';
+import { MediaNode, grabAt } from './nodes/MediaNode';
 import { FlowEdge } from './edges/FlowEdge';
 import { SelectionBar } from './components/SelectionBar';
 import { confirmDialog } from './components/Dialog';
@@ -79,7 +79,7 @@ function mergeVersions(mine: NodeData, theirs: NodeData): NodeData | null {
 
 export function Canvas({ project, episode }: { project: Project; episode: Episode }) {
   const app = useApp();
-  const { models, toast, pickFromHistory } = app;
+  const { models, toast, pickFromHistory, characters } = app;
   const jobs = useJobs();
   const rf = useReactFlow<FlowNode, Edge>();
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>([]);
@@ -99,6 +99,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
   const viewport = useRef<Viewport | undefined>(undefined);
   const saveTimer = useRef<number | undefined>(undefined);
   const uploadRef = useRef<HTMLInputElement>(null);
+  const storyboardRef = useRef<HTMLInputElement>(null);
   const pendingUploadPos = useRef<{ pos: { x: number; y: number }; connectTo?: string; connectFrom?: string } | null>(null);
   // —— 撤销 / 重做：画布停手 0.4 秒记一个快照，⌘Z 退回上一个 ——
   const past = useRef<string[]>([]);
@@ -560,6 +561,10 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     [project.id, addNode],
   );
 
+  /** 标了「接上一条尾帧」、但尾帧还没连上 */
+  const needsFrame = (n?: FlowNode) =>
+    Boolean(n?.data.chainPrev && !(n.data.firstFrame && rf.getEdges().some((e) => e.source === n.data.firstFrame && e.target === n.id)));
+
   const activeOf = (nodeId: string) =>
     jobsRef.current.filter((j) => j.request.nodeId === nodeId && j.request.episodeId === episode.id && (j.status === 'queued' || j.status === 'running')).length;
 
@@ -580,6 +585,16 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           title: `「${n.data.title}」已经有 ${running} 个在生成`,
           message: '再点会再提交一个新任务，会再扣一次费用。确定要再生成一个吗？',
           okText: '再生成一个',
+        });
+        if (!ok) return false;
+      }
+      if (needsFrame(n) && !opts.quiet) {
+        const prev = rf.getNode(n.data.chainPrev!) as FlowNode | undefined;
+        const ok = await confirmDialog({
+          title: `「${n.data.title}」要接上一条的尾帧`,
+          message: `${prev ? `「${prev.data.title}」` : '上一条'}还没生成好，没有尾帧可接。等它生成完会自动把最后一帧连过来，再生成这条衔接最顺。\n现在就直接生成（不接尾帧）吗？`,
+          okText: '直接生成',
+          cancelText: '等上一条',
         });
         if (!ok) return false;
       }
@@ -609,12 +624,17 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
 
   /** 一次生成多个节点：超过 1 个先确认数量和预估花费 */
   const submitMany = useCallback(
-    async (ids: string[]) => {
+    async (idsIn: string[]) => {
+      let ids = idsIn;
       if (!ids.length) return;
       if (ids.length === 1) {
         await submit(ids[0]);
         return;
       }
+      // 要接上一条尾帧、但上一条还没生成的：这次先不生成，等尾帧自动连上再生成
+      const waiting = ids.filter((id) => needsFrame(rf.getNode(id) as FlowNode | undefined));
+      ids = ids.filter((id) => !waiting.includes(id));
+      if (!ids.length) return toast(`这 ${waiting.length} 条都要接上一条的尾帧，先生成它们的上一条`, 'error');
       let total = 0;
       let unknown = 0;
       for (const id of ids) {
@@ -631,6 +651,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
         message: [
           `预估花费 ¥${total.toFixed(2)}${unknown ? `（另有 ${unknown} 个模型没填单价，没算进去）` : ''}`,
           busy ? `其中 ${busy} 个节点已经有任务在生成，会再各提交一个。` : '',
+          waiting.length ? `另有 ${waiting.length} 条要接上一条的尾帧，这次先不生成——上一条生成好后尾帧会自动连上，再生成它们。` : '',
         ]
           .filter(Boolean)
           .join('\n'),
@@ -683,6 +704,178 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     [addNode, project.ratio],
   );
 
+  // —— 导入分镜：novel-to-seedance 技能导出的 E01-片段.json ——
+  const importStoryboard = useCallback(
+    (sb: StoryboardFile) => {
+      if (sb?.format !== 'novel-to-seedance/fragments@1' || !Array.isArray(sb.fragments) || !sb.fragments.length) {
+        toast('这不是分镜导出的 JSON：用 novel-to-seedance 技能的 export_fragments.py 导出', 'error');
+        return;
+      }
+      const gen0 = emptyGen(models, 'video', project);
+      const model = models.find((m) => m.id === gen0.modelId);
+      if (!model) return toast('还没有可用的视频模型：先去模型管理接一个', 'error');
+      const durDef = model.params.find((p) => p.key === 'duration');
+      const ratioDef = model.params.find((p) => p.key === 'ratio');
+      const durOptions = (durDef?.options || []).map(Number).filter((x) => Number.isFinite(x));
+      const nearest = (d: number) => (durOptions.length ? durOptions.reduce((a, b) => (Math.abs(b - d) < Math.abs(a - d) ? b : a)) : d);
+      const portrait = sb.ratio === '9:16' || sb.ratio === '3:4';
+      const all = rf.getNodes();
+      const x0 = all.length ? Math.max(...all.map((n) => n.position.x + (n.measured?.width || 340))) + 240 : 0;
+      const y0 = all.length ? Math.min(...all.map((n) => n.position.y)) : 0;
+      const COLS = 4;
+      const colW = portrait ? 300 : 400;
+      const rowH = (portrait ? 520 : 300) + 300; // 留出下面放尾帧图的位置
+      const newNodes: FlowNode[] = [];
+      const newEdges: Edge[] = [];
+
+      // 参考图：按名字到设定库里找，每个名字一个图片节点，连到所有用到它的片段
+      const names = [...new Set(sb.fragments.flatMap((f) => f.refs || []))];
+      const assetOf = new Map<string, string>();
+      const missing: string[] = [];
+      const noImage: string[] = [];
+      names.forEach((name, i) => {
+        const c = characters.find((x) => x.name === name) || characters.find((x) => name.includes(x.name) || x.name.includes(name));
+        const img = c ? settingImages(c)[0] : undefined;
+        const data = makeNodeData('image', c ? `${c.name}（${SETTING_WORD[settingKind(c)]}）` : `${name}（待补图）`, models, project, { characterId: c?.id });
+        if (img) {
+          data.versions = [{ id: newId('v_'), kind: 'image', file: img.file, label: '设定库', variant: img.note || undefined, createdAt: new Date().toISOString() }];
+          data.current = 0;
+        } else if (c) noImage.push(name);
+        else missing.push(name);
+        const id = newId();
+        assetOf.set(name, id);
+        // 参考图排成一行放在片段上面（竖图很高，竖着排会叠在一起）
+        newNodes.push({ id, type: 'media', position: { x: x0 + i * 400, y: y0 }, data });
+      });
+
+      // 每条片段一个视频节点：提示词、时长、比例都填好；画风已经写在提示词里，不再叠加项目画风
+      const adjusted: string[] = [];
+      const vx = x0;
+      const vy = y0 + (names.length ? 680 : 0);
+      const videoIds: string[] = [];
+      sb.fragments.forEach((f, i) => {
+        const id = newId();
+        const title = `片段${f.no}${f.hook ? ` ${f.hook.replace(/^★+/, '').trim()}` : ''}`;
+        const data = makeNodeData('video', title, models, project, { noStyle: true });
+        const params = { ...data.gen.params };
+        if (durDef) {
+          const d = nearest(f.duration);
+          params.duration = d;
+          if (d !== f.duration) adjusted.push(`片段${f.no} ${f.duration}s→${d}s`);
+        }
+        if (sb.ratio && ratioDef?.options?.some((o) => String(o) === sb.ratio)) params.ratio = sb.ratio;
+        const omni = model.modes.find((m) => m.id === 'omni');
+        data.gen = { ...data.gen, prompt: f.prompt, params, mode: (f.refs?.length || f.chain) && omni ? omni.id : data.gen.mode };
+        if (f.chain && i > 0) data.chainPrev = videoIds[i - 1];
+        newNodes.push({ id, type: 'media', position: { x: vx + (i % COLS) * colW, y: vy + Math.floor(i / COLS) * rowH }, data });
+        videoIds.push(id);
+        for (const r of f.refs || []) {
+          const a = assetOf.get(r);
+          if (a) newEdges.push({ id: newId('e_'), source: a, target: id });
+        }
+      });
+
+      // 成片节点：按片段顺序连好，全部生成完点「拼接」就行
+      const cutId = newId();
+      const rows = Math.ceil(sb.fragments.length / COLS);
+      newNodes.push({
+        id: cutId,
+        type: 'media',
+        position: { x: vx + Math.min(COLS, sb.fragments.length) * colW + 120, y: vy + Math.max(0, rows - 1) * rowH },
+        data: makeNodeData('cut', `成片 · ${sb.title?.match(/《(.+?)》/)?.[1] || sb.title?.replace(/[（(].*$/, '').slice(0, 16) || '分镜'}`, [], project, { clips: videoIds }),
+      });
+      videoIds.forEach((v) => newEdges.push({ id: newId('e_'), source: v, target: cutId }));
+
+      rf.setNodes((ns) => [...ns.map((n) => (n.selected ? { ...n, selected: false } : n)), ...newNodes]);
+      rf.setEdges((es) => [...es, ...newEdges]);
+      setTimeout(() => {
+        window.clearTimeout(snapTimer.current);
+        commitSnapshot();
+        rf.fitView({ nodes: newNodes.map((n) => ({ id: n.id })), padding: 0.12, duration: 450 });
+      }, 60);
+
+      const chained = sb.fragments.filter((f, i) => f.chain && i > 0).length;
+      toast(
+        `已导入 ${sb.fragments.length} 条片段${chained ? `（${chained} 条会自动接上一条的尾帧）` : ''}，参考图 ${names.length} 个，并连好了成片节点`,
+        'info',
+        { label: '撤销', onClick: () => undo() },
+      );
+      const warn = [
+        missing.length ? `设定库里找不到：${missing.join('、')}——已建空的图片节点，上传图后会自动给所有片段用上` : '',
+        noImage.length ? `这些设定还没有图：${noImage.join('、')}` : '',
+        adjusted.length ? `「${model.name}」没有这些时长，已就近调整：${adjusted.slice(0, 4).join('，')}${adjusted.length > 4 ? ' 等' : ''}` : '',
+      ].filter(Boolean);
+      if (warn.length) setTimeout(() => toast(warn.join('；'), 'error'), 400);
+    },
+    [models, project, characters],
+  );
+
+  const importStoryboardFile = useCallback(
+    async (f: File) => {
+      try {
+        importStoryboard(JSON.parse(await f.text()));
+      } catch {
+        toast(`「${f.name}」不是有效的 JSON`, 'error');
+      }
+    },
+    [importStoryboard],
+  );
+
+  // —— 接上一条尾帧：上一条生成好（或换了版本）就截最后一帧，连到这一条当首帧 ——
+  const chainBusy = useRef(new Set<string>());
+  // 截失败过的（节点|版本）不再自动重试，免得每次画布变化都弹一次错；换了版本会重新试
+  const chainFailed = useRef(new Set<string>());
+  useEffect(() => {
+    if (!loaded) return;
+    for (const n of nodes) {
+      const prevId = n.data.chainPrev;
+      if (!prevId) continue;
+      const prev = nodes.find((x) => x.id === prevId);
+      const v = prev && activeVersion(prev.data);
+      if (!prev || !v?.file || fileKind(v.file) !== 'video' || n.data.chainFrom === v.id) continue;
+      const key = `${n.id}|${v.id}`;
+      if (chainBusy.current.has(key) || chainFailed.current.has(key)) continue;
+      chainBusy.current.add(key);
+      (async () => {
+        try {
+          // 先让后端用 ffmpeg 截（最准）；不行就在浏览器里截
+          let file: string;
+          try {
+            file = (await api.frame(project.id, v.file!, 'last')).file;
+          } catch {
+            const { blob } = await grabAt(fileUrl(v.file!), 'last');
+            file = (await api.upload(project.id, new File([blob], `frame-${Date.now()}.png`, { type: 'image/png' }))).file;
+          }
+          const cur = rf.getNode(n.id) as FlowNode | undefined;
+          if (!cur) return;
+          const ver: Version = { id: newId('v_'), kind: 'image', file, label: `${prev.data.title} 尾帧`, createdAt: new Date().toISOString() };
+          const frameId = cur.data.firstFrame;
+          const frameNode = frameId ? (rf.getNode(frameId) as FlowNode | undefined) : undefined;
+          if (frameNode) {
+            rf.updateNodeData(frameNode.id, { versions: [...frameNode.data.versions, ver], current: frameNode.data.versions.length });
+            if (!rf.getEdges().some((e) => e.source === frameNode.id && e.target === n.id)) rf.addEdges({ id: newId('e_'), source: frameNode.id, target: n.id });
+            rf.updateNodeData(n.id, { chainFrom: v.id });
+          } else {
+            const id = newId();
+            const p = rf.getNode(prev.id) as FlowNode;
+            const data = makeNodeData('image', `${prev.data.title} 尾帧`, models, project);
+            data.versions = [ver];
+            data.current = 0;
+            rf.addNodes({ id, type: 'media', position: { x: p.position.x, y: p.position.y + (p.measured?.height || 260) + 60 }, data });
+            rf.addEdges({ id: newId('e_'), source: id, target: n.id });
+            rf.updateNodeData(n.id, { firstFrame: id, chainFrom: v.id });
+          }
+          toast(`「${prev.data.title}」的最后一帧已连到「${cur.data.title}」当首帧，可以生成它了`);
+        } catch (e: any) {
+          chainFailed.current.add(key);
+          toast(`截「${prev.data.title}」的尾帧失败：${e.message || e}——可以在它的视频右上角点相机手动截尾帧，再连到下一条`, 'error');
+        } finally {
+          chainBusy.current.delete(key);
+        }
+      })();
+    }
+  }, [nodes, loaded]);
+
   const openAddMenu: CanvasCtx['openAddMenu'] = useCallback((screen, opts) => setMenu({ ...screen, ...opts }), []);
 
   const ctx: CanvasCtx = useMemo(
@@ -727,6 +920,10 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     if (a.upload) {
       pendingUploadPos.current = { pos, ...link };
       uploadRef.current?.click();
+      return;
+    }
+    if (a.importStoryboard) {
+      storyboardRef.current?.click();
       return;
     }
     if (a.history) {
@@ -888,7 +1085,12 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
   const placeFiles = useCallback(
-    async (files: File[], at: { x: number; y: number }) => {
+    async (filesIn: File[], at: { x: number; y: number }) => {
+      // 分镜 JSON：走导入分镜
+      const jsons = filesIn.filter((f) => /\.json$/i.test(f.name));
+      for (const j of jsons) await importStoryboardFile(j);
+      const files = filesIn.filter((f) => !jsons.includes(f));
+      if (!files.length) return;
       const ok = files.filter((f) => /^(image|video|audio)\//.test(f.type) || /\.(png|jpe?g|webp|gif|mp4|mov|webm|mp3|wav|m4a)$/i.test(f.name));
       if (!ok.length) return toast('只支持图片、视频、音频文件', 'error');
       if (ok.length < files.length) toast(`有 ${files.length - ok.length} 个文件不是图片 / 视频 / 音频，已跳过`);
@@ -896,7 +1098,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       // 多个文件按 4 列网格摆开
       await Promise.all(ok.map((f, i) => uploadAsNode(f, { x: start.x + (i % 4) * 380, y: start.y + Math.floor(i / 4) * 420 })));
     },
-    [uploadAsNode],
+    [uploadAsNode, importStoryboardFile],
   );
 
   useEffect(() => {
@@ -1148,6 +1350,17 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           />
         )}
 
+        <input
+          ref={storyboardRef}
+          type="file"
+          hidden
+          accept=".json,application/json"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = '';
+            if (f) importStoryboardFile(f);
+          }}
+        />
         <input
           ref={uploadRef}
           type="file"

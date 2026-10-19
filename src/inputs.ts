@@ -109,6 +109,8 @@ export function buildRequest(
     ],
     params: data.gen.params,
     noStyle: Boolean(data.noStyle) || undefined,
+    // 首帧图得真的连着、而且这个模式用得上它，才告诉模型「首帧为图片N」
+    firstFrameNodeId: data.firstFrame && usable.some((m) => m.nodeId === data.firstFrame) ? data.firstFrame : undefined,
   };
 }
 

@@ -39,7 +39,7 @@ function drawFrame(v: HTMLVideoElement): Promise<Blob> {
 }
 
 /** 另开一个看不见的播放器，跳到指定时间再截（不打扰正在看的视频） */
-function grabAt(src: string, at: 'first' | 'last'): Promise<{ blob: Blob; t: number }> {
+export function grabAt(src: string, at: 'first' | 'last'): Promise<{ blob: Blob; t: number }> {
   return new Promise((resolve, reject) => {
     const v = document.createElement('video');
     v.muted = true;

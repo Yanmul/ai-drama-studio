@@ -139,6 +139,8 @@ export interface GenerateRequest {
   params: Record<string, string | number | boolean>;
   /** 不带项目画风 */
   noStyle?: boolean;
+  /** 这张参考图是首帧（接上一条的尾帧）：提示词开头会写「首帧为图片N」 */
+  firstFrameNodeId?: string;
 }
 
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
@@ -212,6 +214,12 @@ export interface NodeData {
   run?: { status: JobStatus; jobIds: string[]; error?: string };
   /** 这个节点生成时不带项目画风（比如做白底参考图） */
   noStyle?: boolean;
+  /** 导入分镜：要接哪个节点的尾帧（上一条片段） */
+  chainPrev?: string;
+  /** 截下来的尾帧放在哪个图片节点（连到本节点，当首帧） */
+  firstFrame?: string;
+  /** 尾帧是从上一条的哪个版本截的（上一条换了版本就重截） */
+  chainFrom?: string;
   [key: string]: unknown;
 }
 
@@ -347,4 +355,23 @@ export interface StylePreset {
   name: string;
   prompt: string;
   builtin?: boolean;
+}
+
+/** novel-to-seedance 技能导出的分镜 JSON（export_fragments.py），工作台「导入分镜」读这个 */
+export interface StoryboardFile {
+  format: 'novel-to-seedance/fragments@1';
+  title: string;
+  ratio?: string;
+  fragments: Array<{
+    no: number;
+    start: number;
+    end: number;
+    duration: number;
+    words?: number;
+    hook?: string | null;
+    prompt: string;
+    refs: string[];
+    chain: boolean;
+    endState?: string | null;
+  }>;
 }
