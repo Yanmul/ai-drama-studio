@@ -69,7 +69,14 @@ export const PRESETS: Record<string, Preset> = {
     label: 'OpenAI 格式生图',
     modes: imageModes,
     params: [
-      { key: 'size', label: '尺寸', type: 'select', options: ['1536x1024', '1024x1536', '1024x1024', 'auto'], default: '1536x1024' },
+      // 2K / 4K：OpenAI 官方只认前三档，部分中转站（如 AI派，单边最大 4096）支持更大，不支持的会报错
+      {
+        key: 'size',
+        label: '尺寸',
+        type: 'select',
+        options: ['1536x1024', '1024x1536', '1024x1024', '2048x1152', '1152x2048', '2048x2048', '3840x2160', '2160x3840', '4096x4096', 'auto'],
+        default: '1536x1024',
+      },
       { key: 'count', label: '张数', type: 'select', options: [1, 2, 3, 4], default: 1, unit: '张' },
       { key: 'quality', label: '质量', type: 'select', options: ['auto', 'high', 'medium', 'low'], default: 'auto', advanced: true },
     ],
