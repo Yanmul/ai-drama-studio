@@ -94,12 +94,12 @@ async function openaiImages(ctx: AdapterContext, req: PreparedRequest): Promise<
       const buf = await fs.readFile(abs);
       form.append('image[]', new Blob([buf], { type: mimeOf(abs) }), path.basename(abs));
     }
-    data = await httpJson<any>(joinUrl(base(ctx), 'images/edits'), { headers: headers(ctx), form, timeoutMs: 300_000 });
+    data = await httpJson<any>(joinUrl(base(ctx), 'images/edits'), { headers: headers(ctx), form, timeoutMs: 600_000 });
   } else {
     const body: Record<string, unknown> = { model: ctx.model.remoteModel, prompt: req.prompt, n };
     if (size) body.size = size;
     if (req.params.quality && req.params.quality !== 'auto') body.quality = req.params.quality;
-    data = await httpJson<any>(joinUrl(base(ctx), 'images/generations'), { headers: headers(ctx), body, timeoutMs: 300_000 });
+    data = await httpJson<any>(joinUrl(base(ctx), 'images/generations'), { headers: headers(ctx), body, timeoutMs: 600_000 });
   }
   const outputs = (Array.isArray(data?.data) ? data.data : [])
     .filter((d: any) => d?.url || d?.b64_json)

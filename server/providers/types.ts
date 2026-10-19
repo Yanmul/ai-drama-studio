@@ -128,22 +128,32 @@ export async function httpJson<T = any>(
     /* 不是 JSON */
   }
   if (!resp.ok) {
-    throw new AdapterError(explainVendorError(`HTTP ${resp.status}：${errorText(data, text)}`, resp.status), resp.status === 429, resp.status >= 500);
+    const detail = `HTTP ${resp.status}：${errorText(data, text)}`;
+    // 结果待确认 = 可能已经被收下 / 扣费：按「不确定」处理，不自动重试
+    throw new AdapterError(explainVendorError(detail, resp.status), resp.status === 429, resp.status >= 500 || isUncertainResult(detail));
   }
   return (data ?? {}) as T;
 }
 
 /** 厂商报错 → 前面加一句中文说明和该怎么办，原文留在后面方便排查 */
+/** 服务商说「结果待确认 / 稍后看任务记录」：请求可能已经被收下、甚至已扣费，不能当成普通失败去重试 */
+export function isUncertainResult(detail: string): boolean {
+  return /待确认|无法确认|稍后查看|查看任务记录|避免重复提交|result (is )?pending|pending confirmation/i.test(detail);
+}
+
 export function explainVendorError(detail: string, status?: number): string {
   const d = detail.toLowerCase();
   let hint = '';
+  // 403 不一定是 key 的问题（AI派 的「生成结果待确认」也是 403）：原话里提到 key / 权限 / 分组才这么说
+  const authWords = /api[_ ]?key|token|令牌|密钥|无权|权限|unauthori[sz]ed|forbidden|permission|分组|group|access denied/.test(d);
   // 先看明确的状态码，再看关键词（关键词收紧：别把 "constraint violation"、"case-sensitive" 这类参数错误当成审核没过）
   const moderation = /content[_ ]?(policy|filter|moderation)|moderation|sensitive[_ ]?(content|words?)|safety[_ ]?(system|check|filter)|policy[_ ]?violation|违规|审核|敏感/.test(d);
   const balance = /insufficient[_ ]?(balance|quota|credit|funds)|余额|balance|欠费|credit/.test(d);
-  if (status === 401) hint = 'key 无效或没有权限：去「模型管理」检查 key 和分组';
+  if (isUncertainResult(detail)) hint = '服务商暂时确认不了这次的结果（可能还在生成，也可能已经扣费）：先去服务商后台的任务记录看看，别马上重复提交；一直没结果再找服务商核查';
+  else if (status === 401) hint = 'key 无效或没有权限：去「模型管理」检查 key 和分组';
   else if (status === 402 || balance) hint = '余额不足：去服务商后台充值';
   else if (moderation) hint = '内容没通过审核：换个说法或换参考图';
-  else if (status === 403) hint = 'key 无效或没有权限：去「模型管理」检查 key 和分组';
+  else if (status === 403) hint = authWords ? 'key 无效或没有权限：去「模型管理」检查 key 和分组' : '服务商拒绝了这次请求（403）：看后面的原始信息；不一定是 key 的问题';
   else if (status === 429) hint = '请求太频繁或并发超限：稍后再试，或在模型管理里调低「同时最多」';
   else if (status === 404) hint = '接口地址或模型 ID 不对：去「模型管理」检查';
   else if (status && status >= 500) hint = '服务商那边出错了：稍后再试';
