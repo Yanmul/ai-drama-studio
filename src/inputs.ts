@@ -108,6 +108,7 @@ export function buildRequest(
       ...media.filter((m) => m.characterId && !usable.includes(m)).map((m) => m.characterId!),
     ],
     params: data.gen.params,
+    noStyle: Boolean(data.noStyle) || undefined,
   };
 }
 

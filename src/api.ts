@@ -15,6 +15,7 @@ import type {
   Chat,
   ChatStreamEvent,
   ChatSummary,
+  StylePreset,
 } from '../shared/types';
 
 /** 请求失败：message 是给人看的中文；status / data 留给需要细分处理的地方（比如保存冲突） */
@@ -66,7 +67,10 @@ export const api = {
   projects: () => call<Project[]>('GET', '/api/projects'),
   home: () => call<ProjectSummary[]>('GET', '/api/home'),
   deleteProject: (pid: string) => call('DELETE', `/api/projects/${pid}`),
-  createProject: (name: string) => call<Project>('POST', '/api/projects', { name }),
+  createProject: (name: string, extra: { style?: string; styleId?: string; ratio?: string } = {}) => call<Project>('POST', '/api/projects', { name, ...extra }),
+  styles: () => call<StylePreset[]>('GET', '/api/styles'),
+  addStyle: (name: string, prompt: string) => call<StylePreset>('POST', '/api/styles', { name, prompt }),
+  deleteStyle: (id: string) => call('DELETE', `/api/styles/${id}`),
   updateProject: (pid: string, patch: Partial<Project>) => call<Project>('PUT', `/api/projects/${pid}`, patch),
   episodes: (pid: string) => call<Episode[]>('GET', `/api/projects/${pid}/episodes`),
   createEpisode: (pid: string, title?: string) => call<Episode>('POST', `/api/projects/${pid}/episodes`, { title }),

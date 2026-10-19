@@ -2,7 +2,7 @@ import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, Clapperboard, ListChecks, MessageCircle, Plus, Settings, SlidersHorizontal } from 'lucide-react';
 import { ChatPanel } from './components/ChatPanel';
-import type { Character, Episode, Job, ModelInfo, Project, ServerEvent } from '../shared/types';
+import type { Character, Episode, Job, ModelInfo, Project, ServerEvent, StylePreset } from '../shared/types';
 import { api } from './api';
 import { Canvas } from './Canvas';
 import { Home, type HomeView } from './Home';
@@ -35,6 +35,7 @@ export function App() {
   const [episode, setEpisode] = useState<Episode>();
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [characters, setCharacters] = useState<Character[]>([]);
+  const [styles, setStyles] = useState<StylePreset[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [modal, setModal] = useState<'' | 'models' | 'chars' | 'history' | 'project'>('');
@@ -60,6 +61,11 @@ export function App() {
   const refreshModels = useCallback(() => {
     api.models().then(setModels).catch((e) => toast(e.message, 'error'));
   }, []);
+
+  const refreshStyles = useCallback(() => {
+    api.styles().then(setStyles).catch((e) => toast(`读取风格库失败：${e.message}`, 'error'));
+  }, []);
+  useEffect(() => refreshStyles(), []);
 
   const refreshCharacters = useCallback(() => {
     if (project) api.characters(project.id).then(setCharacters).catch((e) => toast(e.message, 'error'));
@@ -243,12 +249,23 @@ export function App() {
       openEpisode,
       openCharacters: () => setModal('chars'),
       openModels: () => setModal('models'),
+      styles,
+      refreshStyles,
+      saveProject: async (patch) => {
+        if (!project) return;
+        try {
+          setProject(await api.updateProject(project.id, patch));
+        } catch (e: any) {
+          toast(e.message, 'error');
+        }
+      },
+      openProjectSettings: () => setModal('project'),
       pickFromHistory: (cb) => {
         historyCb.current = cb;
         setModal('history');
       },
     }),
-    [project, episode, models, characters, toast, refreshModels, refreshCharacters, cleanup, keepDays, openEpisode],
+    [project, episode, models, characters, styles, toast, refreshModels, refreshCharacters, refreshStyles, cleanup, keepDays, openEpisode],
   );
 
   const renameProject = async (name: string) => {

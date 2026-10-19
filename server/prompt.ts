@@ -43,7 +43,7 @@ export async function buildPrompt(req: GenerateRequest, adapter: Adapter, model:
   }
   const project = await loadProject(req.projectId);
   const parts = [
-    project?.style ? `画风：${project.style}` : '',
+    project?.style && !req.noStyle ? `画风：${project.style}` : '',
     ...inputs,
     ...characterLines,
     user,

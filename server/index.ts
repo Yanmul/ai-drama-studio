@@ -30,6 +30,7 @@ import { ADAPTERS, deleteProvider, listModels, listProviderViews, remoteModels, 
 import { buildPrompt } from './prompt.js';
 import { cleanupStatus, runCleanup, startCleanupSchedule } from './cleanup.js';
 import { stitch } from './stitch.js';
+import { addStyle, deleteStyle, listStyles } from './styles.js';
 import { createChat, deleteChat, getChat, listChats, sendMessage, updateChat } from './chat.js';
 import { cancelJob, enqueue, events, getJob, listJobs, recover, resumeJob, runQuickText } from './queue.js';
 import { addAssets, deleteAsset, listAssets, renameAsset, type AssetInput } from './assets.js';
@@ -105,7 +106,7 @@ app.post('/api/providers/:id/models/:mid/test', async (req) => {
 app.get('/api/projects', async () => listProjects());
 app.post('/api/projects', async (req) => {
   const b = req.body as any;
-  return createProject(b?.name, b?.style, b?.ratio);
+  return createProject(b?.name, b?.style, b?.ratio, b?.styleId);
 });
 app.put('/api/projects/:pid', async (req) => updateProject((req.params as any).pid, req.body as any));
 app.get('/api/home', async () => projectSummaries());
@@ -157,6 +158,14 @@ app.put('/api/projects/:pid/characters/:cid', async (req) => {
 app.delete('/api/projects/:pid/characters/:cid', async (req) => {
   const { pid, cid } = req.params as any;
   await deleteCharacter(pid, cid);
+  return { ok: true };
+});
+
+// —— 风格库 ——
+app.get('/api/styles', async () => listStyles());
+app.post('/api/styles', async (req) => addStyle(req.body as any));
+app.delete('/api/styles/:id', async (req) => {
+  await deleteStyle((req.params as any).id);
   return { ok: true };
 });
 

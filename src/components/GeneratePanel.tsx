@@ -6,12 +6,14 @@ import {
   Eye,
   ArrowUp,
   Camera,
+  Check,
   ChevronDown,
   FileText,
   Languages,
   Loader2,
   Maximize2,
   Minimize2,
+  Palette,
   Plus,
   Settings2,
   ShieldCheck,
@@ -21,6 +23,7 @@ import {
 } from 'lucide-react';
 import type { Character, NodeData, ParamDef, SettingImage } from '../../shared/types';
 import { SettingPicker } from './SettingPicker';
+import { styleName } from './StylePicker';
 import { api, fileUrl } from '../api';
 import { useApp, useCanvas, useNodeJobs } from '../context';
 import { buildRequest, collectInputs, estimateCost } from '../inputs';
@@ -37,7 +40,7 @@ const PLACEHOLDER: Record<string, string> = {
 const ROLE_LABEL = { first_frame: '首帧', last_frame: '尾帧', reference: '参考' } as const;
 
 export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData }) {
-  const { models, characters, toast, openModels, openCharacters, project, episode } = useApp();
+  const { models, characters, toast, openModels, openCharacters, project, episode, styles, saveProject, openProjectSettings } = useApp();
   const nodeJobs = useNodeJobs(episode?.id, nodeId);
   const running = nodeJobs.filter((j) => j.status === 'queued' || j.status === 'running').length;
   const { submit, addNode, uploadAsNode } = useCanvas();
@@ -46,7 +49,7 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
   const srcIds = useMemo(() => conns.map((c) => c.source), [conns]);
   const srcNodes = useNodesData<Node<NodeData>>(srcIds);
   const [expanded, setExpanded] = useState(false);
-  const [pop, setPop] = useState<'' | 'params' | 'advanced' | 'camera' | 'chars' | 'model' | 'mode' | 'final'>('');
+  const [pop, setPop] = useState<'' | 'params' | 'advanced' | 'camera' | 'chars' | 'model' | 'mode' | 'final' | 'style'>('');
   const [finalPrompt, setFinalPrompt] = useState<{ loading?: boolean; text?: string; error?: string }>({});
   // @ 菜单：start = @ 的位置，end = 输入 @ 时的光标位置（插入引用时替换这一段）
   const [at, setAt] = useState<{ start: number; end: number; q: string } | null>(null);
@@ -256,6 +259,53 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
               </span>
             )}
           </>
+        )}
+        {(data.kind === 'image' || data.kind === 'video') && project && (
+          <span className="chip-wrap">
+            <button
+              className={`chip style-chip ${data.noStyle || !project.style?.trim() ? 'off' : ''}`}
+              onClick={() => setPop(pop === 'style' ? '' : 'style')}
+              title={data.noStyle ? '这个节点生成时不带画风' : project.style?.trim() ? `画风：${project.style}` : '这个项目还没有设置画风'}
+            >
+              <Palette size={14} /> {data.noStyle ? '不带画风' : styleName(project, styles)}
+            </button>
+            <Popover open={pop === 'style'} onClose={() => setPop('')} placement="top" className="list-pop style-pop">
+              <div className="style-pop-head">项目画风 · 所有图片 / 视频都会带上</div>
+              <div className="style-pop-list">
+              <button
+                className={`list-item ${!project.style?.trim() ? 'on' : ''}`}
+                onClick={() => (saveProject({ style: '', styleId: undefined }), setPop(''))}
+              >
+                <span className="style-pop-name">无画风</span>
+                {!project.style?.trim() && <Check size={14} className="style-check" />}
+              </button>
+              {styles.map((s) => {
+                const on = project.styleId === s.id && project.style === s.prompt;
+                return (
+                  <button
+                    key={s.id}
+                    className={`list-item ${on ? 'on' : ''}`}
+                    title={s.prompt}
+                    onClick={() => (saveProject({ style: s.prompt, styleId: s.id }), setPop(''))}
+                  >
+                    <span className="style-pop-name">{s.name}</span>
+                    {!s.builtin && <span className="muted">我的</span>}
+                    {on && <Check size={14} className="style-check" />}
+                  </button>
+                );
+              })}
+              </div>
+              <div className="style-pop-foot">
+                <label className="switch mini" title="比如做白底参考图、角色三视图时，不想带项目画风">
+                  <input type="checkbox" checked={Boolean(data.noStyle)} onChange={(e) => updateNodeData(nodeId, { noStyle: e.target.checked || undefined })} />
+                  <span>这个节点不带画风</span>
+                </label>
+                <button className="link" onClick={() => (setPop(''), openProjectSettings())}>
+                  改描述 / 自定义…
+                </button>
+              </div>
+            </Popover>
+          </span>
         )}
         <span className="spacer" />
         <button className="icon" onClick={() => setExpanded(!expanded)} title={expanded ? '收起' : '展开输入框'}>

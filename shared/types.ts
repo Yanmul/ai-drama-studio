@@ -137,6 +137,8 @@ export interface GenerateRequest {
   /** 连进来但还没有定妆图的角色：只把外形描述拼进提示词 */
   characterIds?: string[];
   params: Record<string, string | number | boolean>;
+  /** 不带项目画风 */
+  noStyle?: boolean;
 }
 
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
@@ -208,13 +210,17 @@ export interface NodeData {
   characterId?: string;
   /** 运行状态（不存盘也行，存了方便刷新后看到） */
   run?: { status: JobStatus; jobIds: string[]; error?: string };
+  /** 这个节点生成时不带项目画风（比如做白底参考图） */
+  noStyle?: boolean;
   [key: string]: unknown;
 }
 
 export interface Project {
   id: string;
   name: string;
-  style: string; // 画风描述，自动拼到每条提示词前面
+  style: string; // 画风描述，自动拼到每条图片 / 视频提示词前面
+  /** 画风是从风格库哪一项选的（显示名字用）；手改过描述就清掉，显示「自定义」 */
+  styleId?: string;
   ratio: string;
   createdAt: string;
   /** 收藏：首页、项目页排在最前面，带星标 */
@@ -334,3 +340,11 @@ export type ChatStreamEvent =
   | { t: 'delta'; text: string }
   | { t: 'done'; message: ChatMessage; title: string }
   | { t: 'error'; error: string; message?: ChatMessage };
+
+/** 风格库里的一项：内置的不能改，自己保存的存在 workspace/config/styles.json */
+export interface StylePreset {
+  id: string;
+  name: string;
+  prompt: string;
+  builtin?: boolean;
+}

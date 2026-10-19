@@ -5,13 +5,14 @@ import { confirmDialog } from './Dialog';
 import { Select } from './Select';
 import type { Asset, Character, Project, SettingImage, SettingKind } from '../../shared/types';
 import { api, fileUrl } from '../api';
+import { StyleEditor } from './StylePicker';
 import { useApp } from '../context';
 import { SETTING_WORD, fileKind, fmtTime, settingImages, settingKind } from '../lib';
 
-function Modal({ title, sub, onClose, children, wide }: { title: string; sub?: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
+export function Modal({ title, sub, onClose, children, wide, className = '' }: { title: string; sub?: string; onClose: () => void; children: React.ReactNode; wide?: boolean; className?: string }) {
   return (
     <div className="modal-mask" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal ${wide ? 'wide' : ''}`}>
+      <div className={`modal ${wide ? 'wide' : ''} ${className}`}>
         <div className="modal-head">
           <b>{title}</b>
           {sub && <span className="muted">{sub}</span>}
@@ -273,18 +274,13 @@ export function ProjectSettings({ project, onSaved, onClose }: { project: Projec
   const { toast } = useApp();
   const [p, setP] = useState(project);
   return (
-    <Modal title="项目设置" onClose={onClose}>
+    <Modal title="项目设置" onClose={onClose} className="style-modal">
       <div className="mm-form">
         <div className="form-grid">
           <label>项目名</label>
           <input value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} />
           <label>画风</label>
-          <textarea
-            rows={4}
-            value={p.style}
-            placeholder="自动拼到每条图片 / 视频提示词前面，比如：写实电影质感，胶片颗粒感"
-            onChange={(e) => setP({ ...p, style: e.target.value })}
-          />
+          <StyleEditor style={p.style} styleId={p.styleId} onChange={(v) => setP({ ...p, style: v.style, styleId: v.styleId })} />
           <label>默认比例</label>
           <Select value={p.ratio} options={['9:16', '16:9', '1:1', '4:3', '3:4'].map((r) => ({ value: r, label: r }))} onChange={(r) => setP({ ...p, ratio: r })} />
         </div>
@@ -294,7 +290,7 @@ export function ProjectSettings({ project, onSaved, onClose }: { project: Projec
             className="primary"
             onClick={async () => {
               try {
-                onSaved(await api.updateProject(p.id, p));
+                onSaved(await api.updateProject(p.id, { ...p, style: p.style.trim(), styleId: p.style.trim() ? p.styleId : undefined }));
                 onClose();
               } catch (e: any) {
                 toast(e.message, 'error');
@@ -368,6 +364,46 @@ export function AssetLibrary({ onPick, onClose }: { onPick: (a: Asset) => void; 
             </button>
           </div>
         ))}
+      </div>
+    </Modal>
+  );
+}
+
+// —— 新建项目：起名、选比例和画风 ——
+export function NewProjectDialog({ defaultName, onCreate, onClose }: { defaultName: string; onCreate: (name: string, extra: { style?: string; styleId?: string; ratio: string }) => Promise<void>; onClose: () => void }) {
+  const [name, setName] = useState(defaultName);
+  const [ratio, setRatio] = useState('16:9');
+  const [style, setStyle] = useState<{ style: string; styleId?: string }>({ style: '' });
+  const [busy, setBusy] = useState(false);
+  const go = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onCreate(name.trim() || defaultName, { style: style.style.trim() || undefined, styleId: style.style.trim() ? style.styleId : undefined, ratio });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title="新建项目" sub="画风以后也能在顶栏「设置」或生成面板里换" onClose={onClose} className="style-modal">
+      <div className="mm-form">
+        <div className="form-grid">
+          <label>项目名</label>
+          <input value={name} autoFocus onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && go()} />
+          <label>默认比例</label>
+          <Select value={ratio} options={['9:16', '16:9', '1:1', '4:3', '3:4'].map((r) => ({ value: r, label: r }))} onChange={setRatio} />
+          <label>画风</label>
+          <StyleEditor style={style.style} styleId={style.styleId} onChange={setStyle} />
+        </div>
+        <div className="mm-actions">
+          <span className="spacer" />
+          <button className="ghost" onClick={onClose}>
+            取消
+          </button>
+          <button className="primary" onClick={go} disabled={busy}>
+            {busy ? '创建中…' : '创建'}
+          </button>
+        </div>
       </div>
     </Modal>
   );

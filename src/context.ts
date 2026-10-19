@@ -1,5 +1,5 @@
 import { createContext, useContext, useSyncExternalStore, type Dispatch, type SetStateAction } from 'react';
-import type { Character, Episode, Job, ModelInfo, NodeKind, Project, Version } from '../shared/types';
+import type { Character, Episode, Job, ModelInfo, NodeKind, Project, StylePreset, Version } from '../shared/types';
 
 export interface AppCtx {
   project?: Project;
@@ -12,6 +12,12 @@ export interface AppCtx {
   refreshCharacters: () => void;
   openCharacters: () => void;
   openModels: () => void;
+  /** 风格库（内置 + 自己保存的） */
+  styles: StylePreset[];
+  refreshStyles: () => void;
+  /** 改当前项目（画风等），改完界面跟着更新 */
+  saveProject: (patch: Partial<Project>) => Promise<void>;
+  openProjectSettings: () => void;
   /** 最近一次定时清理删掉的文件；画布据此去掉对应版本 */
   cleanup?: { deleted: string[]; at: number };
   /** 生成 / 上传的文件保留几天（自动清理），节点上提示「几天后清理」用 */

@@ -33,6 +33,7 @@ import type { Asset, Capability, CleanupStatus, ModelInfo, NodeKind, ProjectSumm
 import { api, fileUrl } from './api';
 import { useApp, useJobs } from './context';
 import { confirmDialog, promptDialog } from './components/Dialog';
+import { NewProjectDialog } from './components/Modals';
 import { fileKind } from './lib';
 
 export type HomeView = 'home' | 'projects' | 'assets';
@@ -106,6 +107,7 @@ export function Home({
   const jobs = useJobs();
   const [items, setItems] = useState<ProjectSummary[] | null>(null);
   const [creating, setCreating] = useState<string | null>(null);
+  const [newOpen, setNewOpen] = useState(false);
   const [favs, setFavs] = useState<string[]>([]);
 
   const load = () => api.home().then(setItems).catch((e) => toast(e.message, 'error'));
@@ -121,11 +123,11 @@ export function Home({
   const active = jobs.filter((j) => j.status === 'queued' || j.status === 'running').length;
 
   /** 新建画布；带 kind 时顺便放好一个节点（可指定模型） */
-  const create = async (key: string, name: string, node?: { kind: NodeKind; modelId?: string }) => {
+  const create = async (key: string, name: string, node?: { kind: NodeKind; modelId?: string }, extra: { style?: string; styleId?: string; ratio?: string } = {}) => {
     if (creating) return;
     setCreating(key);
     try {
-      const p = await api.createProject(name);
+      const p = await api.createProject(name, extra);
       if (node) sessionStorage.setItem('pendingNode', JSON.stringify({ pid: p.id, ...node }));
       onOpen(p.id);
     } catch (e: any) {
@@ -165,7 +167,7 @@ export function Home({
         </nav>
         <div className="side-label">创作</div>
         <nav className="side-nav">
-          <button onClick={() => create('blank', `未命名画布 ${stamp()}`)}>
+          <button onClick={() => setNewOpen(true)}>
             <Plus size={17} /> 新建画布
           </button>
         </nav>
@@ -194,10 +196,18 @@ export function Home({
           </button>
         </header>
 
+        {newOpen && (
+          <NewProjectDialog
+            defaultName={`未命名画布 ${stamp()}`}
+            onClose={() => setNewOpen(false)}
+            onCreate={(name, extra) => create('blank', name, undefined, extra)}
+          />
+        )}
+
         <main className="home-main">
           {view === 'home' && (
             <>
-              <section className="hero" onClick={() => create('blank', `未命名画布 ${stamp()}`)}>
+              <section className="hero" onClick={() => setNewOpen(true)}>
                 <div className="hero-dots" />
                 <button className="hero-plus" disabled={!!creating} aria-label="新建画布">
                   {creating === 'blank' ? <Loader2 size={28} className="spin" /> : <Plus size={32} strokeWidth={1.6} />}

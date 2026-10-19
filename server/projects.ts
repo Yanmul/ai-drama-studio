@@ -75,8 +75,8 @@ export async function trashProject(pid: string) {
   await fsp.rename(paths.project(pid), path.join(trash, `${safe(pid)}-${Date.now()}`));
 }
 
-export async function createProject(name: string, style = '', ratio = '16:9'): Promise<Project> {
-  const p: Project = { id: newId('proj_'), name: name || '未命名项目', style, ratio, createdAt: nowIso() };
+export async function createProject(name: string, style = '', ratio = '16:9', styleId?: string): Promise<Project> {
+  const p: Project = { id: newId('proj_'), name: name || '未命名项目', style, styleId: style ? styleId : undefined, ratio, createdAt: nowIso() };
   await writeJson(paths.projectFile(p.id), p);
   await createEpisode(p.id, '第1集');
   return p;
