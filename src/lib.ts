@@ -54,7 +54,8 @@ interface GenPrefs {
   ratio: Record<string, string>;
 }
 const PREFS_KEY = 'genPrefs';
-const NOT_REMEMBERED = new Set(['seed', 'ratio']);
+// 生成声音不记：新节点一律默认开声音（用户要求），单个节点想关再手动关
+const NOT_REMEMBERED = new Set(['seed', 'ratio', 'generate_audio']);
 
 function loadPrefs(): GenPrefs {
   try {

@@ -90,7 +90,7 @@ export const PRESETS: Record<string, Preset> = {
       { key: 'ratio', label: '比例', type: 'select', options: RATIOS_VIDEO, default: '16:9' },
       { key: 'duration', label: '时长', type: 'select', options: [5, 6, 8, 10, 12, 15], default: 5, unit: 's' },
       { key: 'count', label: '条数', type: 'select', options: [1, 2, 3, 4], default: 1, unit: '个' },
-      { key: 'generate_audio', label: '生成声音', type: 'boolean', default: false },
+      { key: 'generate_audio', label: '生成声音', type: 'boolean', default: true },
     ],
   },
 
