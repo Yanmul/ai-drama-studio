@@ -449,6 +449,11 @@ function HoverVideo({
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const previewing = useRef(false);
+  const [preview, setPreviewState] = useState(false); // 给按钮图标用：预览中显示「播放」
+  const setPreview = (v: boolean) => {
+    previewing.current = v;
+    setPreviewState(v);
+  };
   const starting = useRef(false); // 我们自己调 play() 引起的 play 事件，不算用户操作
   const down = useRef<{ x: number; y: number } | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -456,13 +461,25 @@ function HoverVideo({
   const [t, setT] = useState(0);
   const [dur, setDur] = useState(0);
 
+  // 悬停预览才循环；自己点了播放 / 开了声音 / 拖了进度 = 正式在看，只播一遍，播完停住
+  const watch = () => {
+    setPreview(false);
+    if (ref.current) ref.current.loop = false;
+  };
+
   const toggle = () => {
     const el = ref.current;
     if (!el) return;
-    previewing.current = false;
-    if (el.paused || previewing.current) {
+    if (previewing.current) {
+      // 预览中点「播放」= 从头正式看一遍
+      watch();
+      el.currentTime = 0;
       el.play().catch(() => {});
-    } else el.pause();
+      return;
+    }
+    watch();
+    if (el.paused) el.play().catch(() => {});
+    else el.pause();
   };
 
   return (
@@ -473,16 +490,17 @@ function HoverVideo({
         if (!el || !el.paused) return;
         el.muted = true;
         setMuted(true);
-        previewing.current = true;
+        el.loop = true;
+        setPreview(true);
         starting.current = true;
         el.play()
-          .catch(() => (previewing.current = false))
+          .catch(() => setPreview(false))
           .finally(() => (starting.current = false));
       }}
       onMouseLeave={() => {
         const el = ref.current;
         if (el && previewing.current) el.pause();
-        previewing.current = false;
+        setPreview(false);
       }}
     >
       <video
@@ -491,7 +509,6 @@ function HoverVideo({
           if (videoRef) videoRef.current = el;
         }}
         src={src}
-        loop
         muted
         playsInline
         preload="metadata"
@@ -509,30 +526,33 @@ function HoverVideo({
             const el = ref.current;
             if (!el) return;
             if (previewing.current) {
-              // 正在静音预览：点一下 = 开声音从头好好看
-              previewing.current = false;
+              // 正在静音预览：点一下 = 开声音好好看（只播这一遍）
+              watch();
               el.muted = false;
               setMuted(false);
-            } else if (el.paused) el.play().catch(() => {});
-            else el.pause();
+            } else {
+              watch();
+              if (el.paused) el.play().catch(() => {});
+              else el.pause();
+            }
           }
         }}
         onVolumeChange={(e) => {
           setMuted(e.currentTarget.muted);
-          if (!e.currentTarget.muted) previewing.current = false;
+          if (!e.currentTarget.muted) watch();
         }}
         onPlay={() => {
           setPlaying(true);
-          if (!starting.current) previewing.current = false;
+          if (!starting.current) watch();
         }}
         onPause={() => {
           setPlaying(false);
-          previewing.current = false;
+          setPreview(false);
         }}
       />
       <div className="hv-bar nodrag nopan" onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
-        <button className="hv-btn" onClick={toggle} title={playing ? '暂停' : '播放'}>
-          {playing ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" />}
+        <button className="hv-btn" onClick={toggle} title={playing && !preview ? '暂停' : '播放（只播一遍）'}>
+          {playing && !preview ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" />}
         </button>
         <span className="hv-time">{fmtClock(t)}</span>
         <input
@@ -546,7 +566,7 @@ function HoverVideo({
           onChange={(e) => {
             const el = ref.current;
             if (!el) return;
-            previewing.current = false;
+            watch();
             el.currentTime = Number(e.target.value);
             setT(el.currentTime);
           }}
