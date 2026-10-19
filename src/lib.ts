@@ -44,22 +44,72 @@ export function pickModel(models: ModelInfo[], cap: Capability, preferred?: stri
   return list.find((m) => m.id === preferred) || list[0];
 }
 
-export function emptyGen(models: ModelInfo[], kind: NodeKind, projectRatio?: string, preferredModel?: string): GenState {
+// —— 记住上次用的模型和参数：新节点直接用，不用每次重选 ——
+// 模型按类型（图片 / 视频 / 文本）记；参数按模型记（换回这个模型时参数也回来）；
+// 比例按项目记（竖屏项目一直竖屏，不串到别的项目）；随机种子不记。
+interface GenPrefs {
+  model: Partial<Record<Capability, string>>;
+  params: Record<string, Record<string, string | number | boolean>>;
+  mode: Record<string, string>;
+  ratio: Record<string, string>;
+}
+const PREFS_KEY = 'genPrefs';
+const NOT_REMEMBERED = new Set(['seed', 'ratio']);
+
+function loadPrefs(): GenPrefs {
+  try {
+    const p = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
+    return { model: p.model || {}, params: p.params || {}, mode: p.mode || {}, ratio: p.ratio || {} };
+  } catch {
+    return { model: {}, params: {}, mode: {}, ratio: {} };
+  }
+}
+
+/** 用户改了模型 / 参数 / 模式，或者点了生成：记下来，之后新建的节点照这个来 */
+export function rememberGen(kind: NodeKind, projectId: string | undefined, gen: Pick<GenState, 'modelId' | 'mode' | 'params'>) {
   const cap = KIND_CAP[kind];
-  const m = cap ? pickModel(models, cap, preferredModel) : undefined;
-  const params = defaultParams(m);
-  if (projectRatio && m?.params.some((p) => p.key === 'ratio' && p.options?.includes(projectRatio))) params.ratio = projectRatio;
-  const mode = kind === 'video' ? (m?.modes.find((x) => x.id === 'omni') || m?.modes[0])?.id : m?.modes[0]?.id;
+  if (!cap || !gen.modelId) return;
+  const p = loadPrefs();
+  p.model[cap] = gen.modelId;
+  if (gen.mode) p.mode[gen.modelId] = gen.mode;
+  p.params[gen.modelId] = Object.fromEntries(Object.entries(gen.params || {}).filter(([k]) => !NOT_REMEMBERED.has(k)));
+  if (projectId && gen.params?.ratio !== undefined) p.ratio[projectId] = String(gen.params.ratio);
+  localStorage.setItem(PREFS_KEY, JSON.stringify(p));
+}
+
+/** 记住的参数里，这个模型还认的那些（模型的选项改过、换了预设时，过期的值丢掉） */
+function validParams(m: ModelInfo, saved: Record<string, string | number | boolean> = {}) {
+  const out: Record<string, string | number | boolean> = {};
+  for (const def of m.params) {
+    const v = saved[def.key];
+    if (v === undefined) continue;
+    if (def.type === 'select' && !def.options?.some((o) => String(o) === String(v))) continue;
+    out[def.key] = v;
+  }
+  return out;
+}
+
+export function emptyGen(models: ModelInfo[], kind: NodeKind, project?: { id?: string; ratio?: string }, preferredModel?: string): GenState {
+  const cap = KIND_CAP[kind];
+  const prefs = loadPrefs();
+  const m = cap ? pickModel(models, cap, preferredModel || prefs.model[cap]) : undefined;
+  const params = { ...defaultParams(m), ...(m ? validParams(m, prefs.params[m.id]) : {}) };
+  // 比例：这个项目上次用的 → 项目默认比例
+  const ratioDef = m?.params.find((p) => p.key === 'ratio');
+  const ratio = [project?.id ? prefs.ratio[project.id] : undefined, project?.ratio].find((r) => r && ratioDef?.options?.some((o) => String(o) === r));
+  if (ratio) params.ratio = ratio;
+  const remembered = m && prefs.mode[m.id] && m.modes.some((x) => x.id === prefs.mode[m.id]) ? prefs.mode[m.id] : undefined;
+  const mode = remembered || (kind === 'video' ? (m?.modes.find((x) => x.id === 'omni') || m?.modes[0])?.id : m?.modes[0]?.id);
   return { modelId: m?.id, mode, prompt: '', params, refRoles: {} };
 }
 
-export function makeNodeData(kind: NodeKind, title: string, models: ModelInfo[], projectRatio?: string, extra: Partial<NodeData> = {}): NodeData {
+export function makeNodeData(kind: NodeKind, title: string, models: ModelInfo[], project?: { id?: string; ratio?: string }, extra: Partial<NodeData> = {}): NodeData {
   return {
     kind,
     title,
     versions: [],
     current: -1,
-    gen: emptyGen(models, kind, projectRatio),
+    gen: emptyGen(models, kind, project),
     text: kind === 'text' || kind === 'script' ? '' : undefined,
     ...extra,
   };

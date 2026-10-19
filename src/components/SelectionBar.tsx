@@ -157,7 +157,7 @@ export function SelectionBar({ onDone, undo }: { onDone: () => void; undo: () =>
       return Math.abs(dy) > 80 ? dy : a.position.x - b.position.x;
     });
     const id = newId();
-    const data = makeNodeData('cut', '成片', [], project?.ratio, { clips: order.map((n) => n.id) });
+    const data = makeNodeData('cut', '成片', [], project, { clips: order.map((n) => n.id) });
     const node: FlowNode = { id, type: 'media', position: { x: maxX + 120, y: minY }, data, selected: true };
     rf.setNodes((ns) => [...ns.map((n) => (n.selected ? { ...n, selected: false } : n)), node]);
     rf.setEdges((es) => [...es, ...order.map((n) => ({ id: newId('e_'), source: n.id, target: id }))]);

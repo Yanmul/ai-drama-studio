@@ -27,7 +27,7 @@ import { styleName } from './StylePicker';
 import { api, fileUrl } from '../api';
 import { useApp, useCanvas, useNodeJobs } from '../context';
 import { buildRequest, collectInputs, estimateCost } from '../inputs';
-import { CAMERA_MOVES, KIND_CAP, KIND_LABEL, SETTING_WORD, defaultParams, fileKind, settingImages, settingKind } from '../lib';
+import { CAMERA_MOVES, KIND_CAP, KIND_LABEL, SETTING_WORD, defaultParams, fileKind, rememberGen, settingImages, settingKind } from '../lib';
 import { Popover } from './Popover';
 
 const PLACEHOLDER: Record<string, string> = {
@@ -68,6 +68,12 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
   const textModel = models.find((m) => m.capability === 'text');
 
   const setGen = (patch: Partial<NodeData['gen']>) => updateNodeData(nodeId, { gen: { ...data.gen, ...patch } });
+  /** 用户自己改了模型 / 参数 / 模式：改完顺便记住，之后新建的节点默认就用这一套 */
+  const setGenAndRemember = (patch: Partial<NodeData['gen']>) => {
+    setGen(patch);
+    const g = { ...data.gen, ...patch };
+    rememberGen(data.kind, project?.id, { modelId: g.modelId || model?.id, mode: g.mode || mode?.id, params: { ...params, ...g.params } });
+  };
 
   // 提示词框自己留一份文字：节点数据要绕画布一圈才回到这里，直接拿它当 value，
   // 在中间打字时浏览器会把光标重置到末尾（之后 @ 插入就会把光标后的字全吞掉）
@@ -89,11 +95,11 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
       const old = data.gen.params[p.key];
       if (old !== undefined && (p.type !== 'select' || p.options?.includes(old as any))) next[p.key] = old;
     }
-    setGen({ modelId: m.id, mode: m.modes.find((x) => x.id === data.gen.mode)?.id || m.modes[0]?.id, params: next });
+    setGenAndRemember({ modelId: m.id, mode: m.modes.find((x) => x.id === data.gen.mode)?.id || m.modes[0]?.id, params: next });
     setPop('');
   };
 
-  const setParam = (k: string, v: string | number | boolean) => setGen({ params: { ...params, [k]: v } });
+  const setParam = (k: string, v: string | number | boolean) => setGenAndRemember({ params: { ...params, [k]: v } });
 
   // —— @ 引用 ——
   const onPromptChange = (val: string, caret: number) => {
@@ -192,6 +198,7 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
 
   const go = async () => {
     if (busy) return;
+    if (model) rememberGen(data.kind, project?.id, { modelId: model.id, mode: mode?.id, params });
     setBusy(true);
     try {
       await submit(nodeId);
@@ -358,7 +365,7 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
             .filter((x) => (x.maxRefs.image || 0) > 0)
             .slice(-1)
             .map((x) => (
-              <button key={x.id} className="link" onClick={() => setGen({ mode: x.id })}>
+              <button key={x.id} className="link" onClick={() => setGenAndRemember({ mode: x.id })}>
                 切到「{x.label}」
               </button>
             ))}
@@ -426,7 +433,7 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
             </button>
             <Popover open={pop === 'mode'} onClose={() => setPop('')} className="list-pop">
               {model.modes.map((m) => (
-                <button key={m.id} className={`list-item ${m.id === mode?.id ? 'on' : ''}`} onClick={() => (setGen({ mode: m.id }), setPop(''))}>
+                <button key={m.id} className={`list-item ${m.id === mode?.id ? 'on' : ''}`} onClick={() => (setGenAndRemember({ mode: m.id }), setPop(''))}>
                   <span>{m.label}</span>
                   <span className="muted">
                     {[m.maxRefs.image && `图 ≤${m.maxRefs.image}`, m.maxRefs.video && `视频 ≤${m.maxRefs.video}`, m.maxRefs.audio && `音频 ≤${m.maxRefs.audio}`]

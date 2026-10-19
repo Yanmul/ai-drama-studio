@@ -286,7 +286,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     if (!p || p.pid !== project.id) return;
     sessionStorage.removeItem('pendingNode');
     const id = addNode(p.kind, { x: 0, y: 0 });
-    if (p.modelId) rf.updateNodeData(id, { gen: emptyGen(models, p.kind, project.ratio, p.modelId) });
+    if (p.modelId) rf.updateNodeData(id, { gen: emptyGen(models, p.kind, project, p.modelId) });
     setTimeout(() => {
       rf.setNodes((ns) => ns.map((n) => ({ ...n, selected: n.id === id })));
       const n = rf.getNode(id);
@@ -514,7 +514,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
   const addNode: CanvasCtx['addNode'] = useCallback(
     (kind, pos, opts = {}) => {
       const id = newId();
-      const data = makeNodeData(kind, opts.title || `${KIND_LABEL[kind]}节点 ${countOf(kind) + 1}`, models, project.ratio, {
+      const data = makeNodeData(kind, opts.title || `${KIND_LABEL[kind]}节点 ${countOf(kind) + 1}`, models, project, {
         characterId: opts.characterId,
         text: opts.text ?? (kind === 'text' || kind === 'script' ? '' : undefined),
       });
@@ -529,7 +529,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       if (newEdges.length) rf.addEdges(newEdges);
       return id;
     },
-    [models, project.ratio],
+    [models, project.id, project.ratio],
   );
 
   // 对话框里「放到画布」：放在画布可见区域中间（右边被对话框挡住的部分不算）
