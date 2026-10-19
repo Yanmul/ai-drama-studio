@@ -1,7 +1,7 @@
 // 选中节点时弹出的生成面板（参考 LibTV 截图二）。
 // 对应 ComfyUI 里一个模型节点的全部参数：参考素材自动编号、@ 引用、模型 / 模式 / 参数、高级设置、预估花费。
 import { useNodeConnections, useNodesData, useReactFlow, type Node } from '@xyflow/react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Eye,
   ArrowUp,
@@ -40,6 +40,26 @@ const PLACEHOLDER: Record<string, string> = {
 
 const ROLE_LABEL = { first_frame: '首帧', last_frame: '尾帧', reference: '参考' } as const;
 
+/** 文本框里第 pos 个字的位置（相对文本框左上角，已减去滚动）：用一个排版完全相同的隐藏 div 量出来 */
+function caretXY(ta: HTMLTextAreaElement, pos: number) {
+  const cs = getComputedStyle(ta);
+  const div = document.createElement('div');
+  const keys = ['boxSizing', 'width', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'borderTopWidth', 'borderRightWidth',
+    'borderBottomWidth', 'borderLeftWidth', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight', 'textTransform',
+    'wordSpacing', 'textIndent', 'overflowWrap', 'wordBreak', 'tabSize'] as const;
+  for (const k of keys) (div.style as any)[k] = cs[k];
+  Object.assign(div.style, { position: 'absolute', visibility: 'hidden', whiteSpace: 'pre-wrap', top: '0', left: '-9999px', overflow: 'hidden' });
+  div.textContent = ta.value.slice(0, pos);
+  const mark = document.createElement('span');
+  mark.textContent = ta.value.slice(pos) || '.';
+  div.appendChild(mark);
+  document.body.appendChild(div);
+  const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.6;
+  const r = { x: mark.offsetLeft - ta.scrollLeft, y: mark.offsetTop - ta.scrollTop, lh };
+  div.remove();
+  return r;
+}
+
 export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData }) {
   const { models, characters, toast, openModels, openCharacters, project, episode, styles, saveProject, openProjectSettings } = useApp();
   const nodeJobs = useNodeJobs(episode?.id, nodeId);
@@ -54,6 +74,9 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
   const [finalPrompt, setFinalPrompt] = useState<{ loading?: boolean; text?: string; error?: string }>({});
   // @ 菜单：start = @ 的位置，end = 输入 @ 时的光标位置（插入引用时替换这一段）
   const [at, setAt] = useState<{ start: number; end: number; q: string } | null>(null);
+  // @ 菜单放在 @ 那个字的正下方（下面放不下就放上面），不再固定在整个输入框底下
+  const [atPos, setAtPos] = useState<{ left: number; top: number } | null>(null);
+  const atMenuRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
   const [translating, setTranslating] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -110,6 +133,21 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
     setAt(m && media.length ? { start: caret - m[0].length, end: caret, q: m[1] } : null);
   };
   const atOptions = at ? media.filter((m) => m.token.slice(1).startsWith(at.q) || m.title.includes(at.q)) : [];
+  useLayoutEffect(() => {
+    const ta = taRef.current;
+    if (!at || !ta || !atOptions.length) return setAtPos(null);
+    const { x, y, lh } = caretXY(ta, at.start);
+    const wrapW = ta.parentElement?.clientWidth || ta.clientWidth;
+    const left = Math.max(0, Math.min(x, wrapW - 280));
+    const below = ta.offsetTop + y + lh + 4;
+    setAtPos({ left, top: below });
+    // 下一帧量一下菜单：超出屏幕底部就翻到这一行上面
+    requestAnimationFrame(() => {
+      const el = atMenuRef.current;
+      if (!el) return;
+      if (el.getBoundingClientRect().bottom > window.innerHeight - 8) setAtPos({ left, top: ta.offsetTop + y - el.offsetHeight - 4 });
+    });
+  }, [at?.start, at?.q, atOptions.length, expanded]);
   const insertToken = (token: string) => {
     if (!at) return;
     const next = prompt.slice(0, at.start) + token + ' ' + prompt.slice(at.end);
@@ -408,7 +446,7 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
           }}
         />
         {at && atOptions.length > 0 && (
-          <div className="at-menu">
+          <div className="at-menu" ref={atMenuRef} style={atPos ? { left: atPos.left, top: atPos.top } : undefined}>
             {atOptions.map((m) => (
               <button key={m.nodeId} className="list-item" onMouseDown={(e) => (e.preventDefault(), insertToken(m.token))}>
                 {fileKind(m.file) === 'image' ? <img src={fileUrl(m.file)} /> : <span className="thumb-empty" />}
