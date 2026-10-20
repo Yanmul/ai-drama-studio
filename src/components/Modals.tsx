@@ -6,6 +6,7 @@ import { Select } from './Select';
 import type { Asset, Character, Project, SettingImage, SettingKind } from '../../shared/types';
 import { api, fileUrl } from '../api';
 import { StyleEditor } from './StylePicker';
+import { dropKind, useFileDrop } from '../useFileDrop';
 import { useApp } from '../context';
 import { SETTING_WORD, fileKind, fmtTime, settingImages, settingKind } from '../lib';
 
@@ -97,7 +98,12 @@ export function CharacterLibrary({ onClose }: { onClose: () => void }) {
     } finally {
       setUploading(false);
     }
-  };
+  };  const imgDrop = useFileDrop((fs) => upload(fs), {
+    disabled: uploading,
+    accept: (f) => dropKind(f) === 'image',
+    onReject: () => toast('设定库只能放图片', 'error'),
+  });
+
 
   return (
     <Modal title="设定库" sub="角色、场景、道具：描述会自动拼进连到的生成节点，图当参考图；一个设定可以放多张图（多角度、表情、服装）" onClose={() => leave(onClose)} wide>
@@ -154,7 +160,7 @@ export function CharacterLibrary({ onClose }: { onClose: () => void }) {
               <label>
                 参考图 <span className="muted">第一张是主图；放到画布时可以选用哪一张，备注会一起带进提示词</span>
               </label>
-              <div className="set-images">
+              <div className={`set-images ${imgDrop.over ? 'drop-over' : ''}`} {...imgDrop.props}>
                 {images.map((img, i) => (
                   <div key={img.file + i} className={`set-img ${i === 0 ? 'main' : ''}`}>
                     <img src={fileUrl(img.file)} />
@@ -178,7 +184,7 @@ export function CharacterLibrary({ onClose }: { onClose: () => void }) {
                 ))}
                 <button className="set-img add" onClick={() => fileRef.current?.click()} disabled={uploading}>
                   {uploading ? <Loader2 size={20} className="spin" /> : <Plus size={22} />}
-                  <span>{uploading ? '上传中…' : '上传图片（可多选）'}</span>
+                  <span>{uploading ? '上传中…' : '上传图片（可多选，也能直接拖进来）'}</span>
                 </button>
               </div>
             </div>

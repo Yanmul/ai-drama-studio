@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import type { Character, NodeData, ParamDef, SettingImage } from '../../shared/types';
 import { SettingPicker } from './SettingPicker';
+import { dropKind, useFileDrop } from '../useFileDrop';
 import { styleName } from './StylePicker';
 import { api, fileUrl } from '../api';
 import { useApp, useCanvas, useNodeJobs } from '../context';
@@ -82,6 +83,11 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
   const [translating, setTranslating] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const refInput = useRef<HTMLInputElement>(null);
+  // 拖图片 / 视频 / 音频到生成面板上 = 上传并作为参考连进来
+  const refDrop = useFileDrop(
+    (fs) => fs.forEach((f, i) => uploadAsNode(f, leftOf((media.length + i) * 60), nodeId)),
+    { accept: (f) => dropKind(f) !== 'other', onReject: () => toast('只能拖图片、视频、音频作为参考', 'error') },
+  );
 
   const cap = KIND_CAP[data.kind]!;
   const list = models.filter((m) => m.capability === cap);
@@ -363,7 +369,8 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
   }
 
   return (
-    <div className={`gen-panel nodrag nowheel nopan ${expanded ? 'expanded' : ''}`} onKeyDown={(e) => e.stopPropagation()}>
+    <div className={`gen-panel nodrag nowheel nopan ${expanded ? 'expanded' : ''} ${refDrop.over ? 'drop-over' : ''}`} onKeyDown={(e) => e.stopPropagation()} {...refDrop.props}>
+      {refDrop.over && <div className="drop-hint">松手：作为参考连到这个节点</div>}
       <div className="chips">
         <button className="chip" onClick={() => refInput.current?.click()} title="上传一张图 / 一段视频 / 音频作为参考，自动连到这个节点">
           <Plus size={14} /> 参考

@@ -8,6 +8,7 @@ import { api, fileUrl } from '../api';
 import { useApp, useCanvas, useNodeJobs } from '../context';
 import { KIND_LABEL, SETTING_WORD, fileKind, newId, settingImages, settingKind, shownVersion } from '../lib';
 import { GeneratePanel } from '../components/GeneratePanel';
+import { dropKind, useFileDrop } from '../useFileDrop';
 import { CutPanel } from '../components/CutPanel';
 import { Lightbox } from '../components/Lightbox';
 import { Popover } from '../components/Popover';
@@ -79,6 +80,18 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
   }, [frameMenu]);
   const Icon = ICON[data.kind];
   const v = shownVersion(data);
+  // 拖文件到节点上 = 上传新版本（类型要对：图片节点只收图片）
+  const canDrop = data.kind === 'image' || data.kind === 'video' || data.kind === 'audio';
+  const drop = useFileDrop(
+    async (fs) => {
+      for (const f of fs) await uploadInto(f);
+    },
+    {
+      disabled: !canDrop,
+      accept: (f) => dropKind(f) === data.kind,
+      onReject: () => toast(`这是${KIND_LABEL[data.kind]}节点，只能拖${KIND_LABEL[data.kind]}进来；要新建节点就拖到画布空白处`, 'error'),
+    },
+  );
 
   const nodeJobs = useNodeJobs(episode?.id, id);
   const active = nodeJobs.filter((j) => j.status === 'queued' || j.status === 'running');
@@ -209,7 +222,7 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
   const portrait = project?.ratio === '9:16' || project?.ratio === '3:4';
 
   return (
-    <div className={`node node-${data.kind} ${selected ? 'selected' : ''} ${active.length ? 'busy' : ''}`}>
+    <div className={`node node-${data.kind} ${selected ? 'selected' : ''} ${active.length ? 'busy' : ''} ${drop.over ? 'drop-over' : ''}`} {...drop.props}>
       <div className="node-head">
         <Icon size={13} />
         {editingTitle ? (

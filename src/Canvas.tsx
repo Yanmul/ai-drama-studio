@@ -1189,6 +1189,19 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
   // —— 从桌面拖进来 / 粘贴进来的素材：图片变图片节点，视频变视频节点，音频变音频节点 ——
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
+  useEffect(() => {
+    // 文件被节点 / 生成面板接走时，画布收不到 drop：在捕获阶段统一复位
+    const reset = () => {
+      dragDepth.current = 0;
+      setDragging(false);
+    };
+    window.addEventListener('drop', reset, true);
+    window.addEventListener('dragend', reset, true);
+    return () => {
+      window.removeEventListener('drop', reset, true);
+      window.removeEventListener('dragend', reset, true);
+    };
+  }, []);
   const placeFiles = useCallback(
     async (filesIn: File[], at: { x: number; y: number }) => {
       // 分镜 JSON：走导入分镜

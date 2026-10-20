@@ -5000,3 +5000,30 @@ input.short {
   width: 40px;
   height: 40px;
 }
+
+/* 拖文件上传：拖到上面时高亮 */
+.node.drop-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: 4px;
+  border-radius: 16px;
+}
+.gen-panel.drop-over,
+.set-images.drop-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: 3px;
+}
+.gen-panel {
+  position: relative;
+}
+.drop-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  border-radius: inherit;
+  background: rgba(122, 167, 255, 0.12);
+  color: var(--accent);
+  font-size: 15px;
+  pointer-events: none;
+}
