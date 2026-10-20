@@ -376,6 +376,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       api
         .saveCanvas(project.id, episode.id, body, keepalive && small)
         .then((r) => {
+          saveRetries.current = 0;
           if (r?.savedAt) savedAt.current = r.savedAt;
           lastSavedKey.current = key;
           lastSavedBody.current = normalize(body);
@@ -388,6 +389,15 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
             return;
           }
           dirty.current = true;
+          // 后台重启（改了后端代码、电脑睡醒）这类一两秒就好的：先自己隔 2 秒重试，连着失败 3 次才提醒
+          if (saveRetries.current < 3) {
+            saveRetries.current += 1;
+            setSaveState('dirty');
+            window.clearTimeout(saveTimer.current);
+            saveTimer.current = window.setTimeout(() => saveRef.current(), 2000);
+            return;
+          }
+          saveRetries.current = 0;
           setSaveState('error');
           toast(`保存失败：${e.message}`, 'error', { label: '重试', onClick: () => saveRef.current() });
         })
@@ -479,6 +489,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     const wait = Date.now() - dirtySince.current > 3000 ? 0 : 800;
     saveTimer.current = window.setTimeout(() => save(), wait);
   };
+  const saveRetries = useRef(0);
   const saveRef = useRef(save);
   saveRef.current = save;
 
