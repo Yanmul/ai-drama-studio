@@ -65,10 +65,21 @@ app.addHook('onRequest', async (req, reply) => {
   if (LOCAL_HOSTS.has(host) && originOk) return;
   // 「参考图传法 = 给公网链接」时，厂商会从你配置的公网地址来取素材：只放行这个地址上的 GET / HEAD /files/（有的厂商取之前先 HEAD 一下）
   // 只放行参考素材（上传的、生成的、资产库），配置、任务记录、画布这些不让外网读
-  if ((req.method === 'GET' || req.method === 'HEAD') && PUBLIC_FILES.test(req.url.split('?')[0]) && !req.url.includes('..') && host && (await publicHosts()).has(host)) return;
+  if ((req.method === 'GET' || req.method === 'HEAD') && isPublicFile(req.url) && host && (await publicHosts()).has(host)) return;
   return reply.status(403).send({ error: '只允许从本机访问' });
 });
 const PUBLIC_FILES = /^\/files\/(projects\/[^/]+\/uploads\/[^/]+|projects\/[^/]+\/episodes\/[^/]+\/assets\/[^/]+\/[^/]+\.(png|jpe?g|webp|gif|mp4|mov|webm|mp3|wav|m4a)|assets\/files\/[^/]+)$/i;
+/** 先解码再判断：不然 %2e%2e%2f 能绕过 .. 检查，被静态文件服务解码后读到工作文件夹里的配置 */
+function isPublicFile(url: string): boolean {
+  let p: string;
+  try {
+    p = decodeURIComponent(url.split('?')[0]);
+  } catch {
+    return false;
+  }
+  if (p.includes('..') || p.includes('\\') || p.includes('%') || p.includes('\0')) return false;
+  return PUBLIC_FILES.test(p);
+}
 async function publicHosts(): Promise<Set<string>> {
   const ps = await listProviderViews();
   return new Set(ps.filter((p) => p.refMode === 'public' && p.publicBaseUrl).map((p) => hostnameOf(p.publicBaseUrl!)));
