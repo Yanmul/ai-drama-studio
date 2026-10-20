@@ -580,9 +580,15 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
   const missingText = (m: Map<string, string[]>) =>
     [...m].map(([name, used]) => `· ${name}（用在 ${used.slice(0, 4).join('、')}${used.length > 4 ? ` 等 ${used.length} 条` : ''}）`).join('\n');
 
-  /** 标了「接上一条尾帧」、但尾帧还没连上 */
-  const needsFrame = (n?: FlowNode) =>
-    Boolean(n?.data.chainPrev && !(n.data.firstFrame && rf.getEdges().some((e) => e.source === n.data.firstFrame && e.target === n.id)));
+  /** 标了「接上一条尾帧」、但尾帧还没连上。
+   *  上一条当前这版的尾帧已经接过、后来被你手动删了线 / 删了节点的，算你不要了，不再等 */
+  const needsFrame = (n?: FlowNode) => {
+    if (!n?.data.chainPrev) return false;
+    if (n.data.firstFrame && rf.getEdges().some((e) => e.source === n.data.firstFrame && e.target === n.id)) return false;
+    const prev = rf.getNode(n.data.chainPrev) as FlowNode | undefined;
+    const v = prev && activeVersion(prev.data);
+    return !(v?.file && n.data.chainFrom === v.id);
+  };
 
   const activeOf = (nodeId: string) =>
     jobsRef.current.filter((j) => j.request.nodeId === nodeId && j.request.episodeId === episode.id && (j.status === 'queued' || j.status === 'running')).length;
@@ -622,9 +628,13 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       askNotifyPermission();
       if (needsFrame(n) && !opts.quiet) {
         const prev = rf.getNode(n.data.chainPrev!) as FlowNode | undefined;
+        const prevV = prev && activeVersion(prev.data);
+        const prevReady = Boolean(prevV?.file && fileKind(prevV.file) === 'video');
         const ok = await confirmDialog({
           title: `「${n.data.title}」要接上一条的尾帧`,
-          message: `${prev ? `「${prev.data.title}」` : '上一条'}还没生成好，没有尾帧可接。等它生成完会自动把最后一帧连过来，再生成这条衔接最顺。\n现在就直接生成（不接尾帧）吗？`,
+          message: prevReady
+            ? `「${prev!.data.title}」的尾帧没能自动截下来。可以在它的视频右上角点相机手动截尾帧、连到这一条再生成。\n现在就直接生成（不接尾帧）吗？`
+            : `${prev ? `「${prev.data.title}」` : '上一条'}还没生成好，没有尾帧可接。等它生成完会自动把最后一帧连过来，再生成这条衔接最顺。\n现在就直接生成（不接尾帧）吗？`,
           okText: '直接生成',
           cancelText: '等上一条',
         });
@@ -684,7 +694,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
         message: [
           `预估花费 ¥${total.toFixed(2)}${unknown ? `（另有 ${unknown} 个模型没填单价，没算进去）` : ''}`,
           busy ? `其中 ${busy} 个节点已经有任务在生成，会再各提交一个。` : '',
-          waiting.length ? `另有 ${waiting.length} 条要接上一条的尾帧，这次先不生成——上一条生成好后尾帧会自动连上，再生成它们。` : '',
+          waiting.length ? `另有 ${waiting.length} 条要接上一条的尾帧，这次先不生成——上一条生成好后尾帧会自动连上，你再点生成它们（想全自动接着生成，用成片节点上的「生成全部片段」）。` : '',
           miss.size ? `\n⚠️ 这些参考还没有图（只写了名字，模型不知道长什么样）：\n${missingText(miss)}` : '',
         ]
           .filter(Boolean)
@@ -900,13 +910,17 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
             rf.updateNodeData(n.id, { firstFrame: id, chainFrom: v.id });
           }
           if (cur.data.autoRun) {
-            // 整集生成里等着的：尾帧连上了就自动开始
-            rf.updateNodeData(n.id, { autoRun: undefined });
-            setTimeout(() => submitRef.current(n.id, { skipBusyCheck: true, quiet: true, skipMissingCheck: true }), 300);
+            // 整集生成里等着的：尾帧连上了就自动开始。提交完再清 autoRun，中间不会被算成「没提交上」
+            setTimeout(async () => {
+              await submitRef.current(n.id, { skipBusyCheck: true, quiet: true, skipMissingCheck: true });
+              rf.updateNodeData(n.id, { autoRun: undefined });
+            }, 300);
             toast(`「${prev.data.title}」的最后一帧已连到「${cur.data.title}」，自动开始生成`);
           } else toast(`「${prev.data.title}」的最后一帧已连到「${cur.data.title}」当首帧，可以生成它了`);
         } catch (e: any) {
           chainFailed.current.add(key);
+          // 整集生成在等它的：接不上了，别让整集一直等
+          if ((rf.getNode(n.id) as FlowNode | undefined)?.data.autoRun) rf.updateNodeData(n.id, { autoRun: undefined });
           toast(`截「${prev.data.title}」的尾帧失败：${e.message || e}——可以在它的视频右上角点相机手动截尾帧，再连到下一条`, 'error');
         } finally {
           chainBusy.current.delete(key);
@@ -949,13 +963,25 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       });
       if (!ok) return;
       askNotifyPermission();
+      // 先全部标上 autoRun（= 归整集生成管），提交一条清一条；没提交上的清掉后算「没提交上」
+      for (const id of todo) rf.updateNodeData(id, { autoRun: true });
       rf.updateNodeData(cutId, { batch: { startedAt: new Date().toISOString(), clips: todo } });
       let sent = 0;
+      let waiting = 0;
+      let failed = 0;
       for (const id of todo) {
-        if (needsFrame(rf.getNode(id) as FlowNode)) rf.updateNodeData(id, { autoRun: true });
-        else if (await submit(id, { skipBusyCheck: true, quiet: true, skipMissingCheck: true })) sent += 1;
+        if (needsFrame(rf.getNode(id) as FlowNode)) {
+          waiting += 1;
+          continue;
+        }
+        if (await submit(id, { skipBusyCheck: true, quiet: true, skipMissingCheck: true })) sent += 1;
+        else failed += 1;
+        rf.updateNodeData(id, { autoRun: undefined });
       }
-      toast(`整集生成开始：先提交了 ${sent} 条${todo.length > sent ? `，另外 ${todo.length - sent} 条等上一条的尾帧自动开始` : ''}`);
+      toast(
+        `整集生成开始：先提交了 ${sent} 条${waiting ? `，${waiting} 条等上一条的尾帧自动开始` : ''}${failed ? `，${failed} 条没提交上（见上面的提示）` : ''}`,
+        failed ? 'error' : 'info',
+      );
     },
     [models, submit],
   );
@@ -972,9 +998,9 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       if (!pr.finished) continue;
       rf.updateNodeData(n.id, { batch: undefined });
       for (const id of batch.clips) if ((rf.getNode(id) as FlowNode | undefined)?.data.autoRun) rf.updateNodeData(id, { autoRun: undefined });
-      const bad = pr.failed + pr.blocked;
+      const bad = pr.failed + pr.blocked + pr.skipped;
       const msg = bad
-        ? `「${n.data.title}」整集生成结束：成功 ${pr.done} 条，失败 ${pr.failed} 条${pr.blocked ? `，${pr.blocked} 条因为上一条失败没法接尾帧` : ''}——失败的点进去单独重试`
+        ? `「${n.data.title}」整集生成结束：成功 ${pr.done} 条${pr.failed ? `，失败 ${pr.failed} 条` : ''}${pr.skipped ? `，${pr.skipped} 条没提交上` : ''}${pr.blocked ? `，${pr.blocked} 条因为上一条没成功没法接尾帧` : ''}——点进去单独生成`
         : `「${n.data.title}」整集 ${pr.done} 条全部生成好了，可以点「拼接」出成片`;
       toast(msg, bad ? 'error' : 'info');
       notify(bad ? '整集生成结束（有失败）' : '整集生成好了', msg, !bad);

@@ -596,7 +596,19 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
           {srcIds.includes(data.firstFrame || '')
             ? `首帧接「${(getNode(data.chainPrev)?.data as NodeData | undefined)?.title || '上一条'}」的最后一帧（已连上）`
             : `要接「${(getNode(data.chainPrev)?.data as NodeData | undefined)?.title || '上一条'}」的最后一帧：它生成好后会自动连上，再生成这条`}
-          <button className="link" onClick={() => updateNodeData(nodeId, { chainPrev: undefined, chainFrom: undefined })} title="不接上一条的尾帧了，这条按自己的提示词开场">
+          <button
+            className="link"
+            onClick={() => {
+              updateNodeData(nodeId, { chainPrev: undefined, chainFrom: undefined });
+              // 整集生成正等着它接尾帧：不接了就直接开始，提交完再清标记（中间不会被算成「没提交上」）
+              if (data.autoRun)
+                setTimeout(async () => {
+                  await submit(nodeId, { skipBusyCheck: true, quiet: true, skipMissingCheck: true });
+                  updateNodeData(nodeId, { autoRun: undefined });
+                }, 0);
+            }}
+            title="不接上一条的尾帧了，这条按自己的提示词开场"
+          >
             不接了
           </button>
         </div>

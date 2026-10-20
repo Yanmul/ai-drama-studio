@@ -220,9 +220,10 @@ export interface EpisodeBatch {
   startedAt: string;
   clips: string[];
 }
-export type ClipState = 'done' | 'running' | 'failed' | 'waiting' | 'blocked';
+export type ClipState = 'done' | 'running' | 'failed' | 'waiting' | 'blocked' | 'skipped';
 
-/** 每条片段这一轮的状态：生成好了 / 在生成 / 失败 / 等上一条尾帧 / 上一条失败了接不上 */
+/** 整集生成的进度。autoRun = 这条还由整集生成负责提交（等尾帧 / 正在提交）；
+ *  没任务、也不归整集生成管了 = 没提交上（提示词空、余额不足、尾帧截失败……），不再干等 */
 export function batchProgress(batch: EpisodeBatch, jobs: Job[], dataOf: (id: string) => NodeData | undefined) {
   const state = new Map<string, ClipState>();
   for (const id of batch.clips) {
@@ -230,14 +231,23 @@ export function batchProgress(batch: EpisodeBatch, jobs: Job[], dataOf: (id: str
     if (js.some((j) => j.status === 'succeeded')) state.set(id, 'done');
     else if (js.some((j) => j.status === 'queued' || j.status === 'running')) state.set(id, 'running');
     else if (js.some((j) => j.status === 'failed' || j.status === 'cancelled')) state.set(id, 'failed');
-    else state.set(id, 'waiting');
+    else state.set(id, dataOf(id)?.autoRun ? 'waiting' : 'skipped');
   }
-  // 等着接尾帧、但上一条失败了 → 接不上了
+  // 等着接尾帧、但上一条失败了 / 没提交上 → 接不上了
   for (const id of batch.clips) {
     const prev = dataOf(id)?.chainPrev;
-    if (state.get(id) === 'waiting' && prev && (state.get(prev) === 'failed' || state.get(prev) === 'blocked')) state.set(id, 'blocked');
+    const ps = prev ? state.get(prev) : undefined;
+    if (state.get(id) === 'waiting' && (ps === 'failed' || ps === 'blocked' || ps === 'skipped')) state.set(id, 'blocked');
   }
   const count = (s: ClipState) => [...state.values()].filter((x) => x === s).length;
-  const r = { done: count('done'), running: count('running'), failed: count('failed'), waiting: count('waiting'), blocked: count('blocked'), total: batch.clips.length };
+  const r = {
+    done: count('done'),
+    running: count('running'),
+    failed: count('failed'),
+    waiting: count('waiting'),
+    blocked: count('blocked'),
+    skipped: count('skipped'),
+    total: batch.clips.length,
+  };
   return { ...r, finished: r.running === 0 && r.waiting === 0, state };
 }

@@ -116,7 +116,11 @@ function MediaNodeImpl({ id, data, selected }: NodeProps<Node<NodeData>>) {
         return;
       }
       const ver: Version = { id: newId('v_'), kind: up.kind, file: up.file, createdAt: new Date().toISOString(), label: '上传' };
-      updateNodeData(id, { versions: [...data.versions, ver], current: data.versions.length });
+      // 用最新的节点数据追加：一次拖进好几个文件、或上传期间生成结果落进来，都不会互相覆盖
+      updateNodeData(id, (n) => {
+        const vs = (n.data as NodeData).versions || [];
+        return { versions: [...vs, ver], current: vs.length };
+      });
     } catch (e: any) {
       toast(e.message, 'error');
     }

@@ -4966,6 +4966,10 @@ input.short {
 .cut-progress-bar span.fail {
   background: var(--bad);
 }
+.cut-progress .cut-stop {
+  align-self: flex-start;
+  color: var(--text-3);
+}
 
 /* 添加菜单里的设定库子菜单：缩略图小图显示，整个子菜单不超过屏幕高度 */
 .am-sub {
