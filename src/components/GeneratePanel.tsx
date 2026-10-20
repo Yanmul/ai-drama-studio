@@ -19,6 +19,7 @@ import {
   Settings2,
   ShieldCheck,
   Volume2,
+  Wand2,
   VolumeX,
   Zap,
 } from 'lucide-react';
@@ -28,7 +29,7 @@ import { styleName } from './StylePicker';
 import { api, fileUrl } from '../api';
 import { useApp, useCanvas, useNodeJobs } from '../context';
 import { buildRequest, collectInputs, estimateCost } from '../inputs';
-import { CAMERA_MOVES, KIND_CAP, KIND_LABEL, SETTING_WORD, defaultParams, fileKind, rememberGen, settingImages, settingKind } from '../lib';
+import { CAMERA_MOVES, KIND_CAP, KIND_LABEL, SETTING_WORD, activeVersion, defaultParams, fileKind, matchSettings, newId, rememberGen, settingImages, settingKind } from '../lib';
 import { Popover } from './Popover';
 
 const PLACEHOLDER: Record<string, string> = {
@@ -65,7 +66,7 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
   const nodeJobs = useNodeJobs(episode?.id, nodeId);
   const running = nodeJobs.filter((j) => j.status === 'queued' || j.status === 'running').length;
   const { submit, addNode, uploadAsNode } = useCanvas();
-  const { updateNodeData, getNode } = useReactFlow();
+  const { updateNodeData, getNode, getNodes, getEdges, addEdges, deleteElements } = useReactFlow();
   const conns = useNodeConnections({ id: nodeId, handleType: 'target' });
   const srcIds = useMemo(() => conns.map((c) => c.source), [conns]);
   const srcNodes = useNodesData<Node<NodeData>>(srcIds);
@@ -203,6 +204,94 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
     setPop('');
   };
 
+  // —— 智能引用：提示词里提到设定库里的名字，就把那张图连进来，并在名字后面标上（@图N） ——
+  const autoLink = (text: string, silent = false) => {
+    const matches = matchSettings(text, characters);
+    if (!matches.length) {
+      if (!silent) toast('提示词里没有找到设定库里的名字（台词里的不算）', 'error');
+      return;
+    }
+    const before = { prompt: text, mode: data.gen.mode, autoLinked: data.autoLinked };
+    // 上次智能引用自动连的图，这次提示词里没提到了 → 断开（手动连的不动）
+    const prevAuto = (data.autoLinked as string[] | undefined) || [];
+    const keepIds = new Set<string>();
+    for (const m of matches) {
+      const hit = (getNodes() as Node<NodeData>[]).find((n) => n.id !== nodeId && n.data.characterId === m.setting.id && (!m.image || activeVersion(n.data)?.file === m.image.file));
+      if (hit) keepIds.add(hit.id);
+    }
+    const staleEdges = getEdges().filter((e) => e.target === nodeId && prevAuto.includes(e.source) && !keepIds.has(e.source));
+    if (staleEdges.length) deleteElements({ edges: staleEdges.map((e) => ({ id: e.id })) });
+    const srcIds = getEdges().filter((e) => e.target === nodeId && !staleEdges.some((x) => x.id === e.id)).map((e) => e.source);
+    const sameAs = (n: Node<NodeData> | undefined, m: (typeof matches)[number]) =>
+      Boolean(n && n.data.characterId === m.setting.id && (!m.image || activeVersion(n.data)?.file === m.image.file));
+    const sources = srcIds.map((id) => ({ id, data: getNode(id)?.data as NodeData })).filter((x) => x.data);
+    const createdNodes: string[] = [];
+    const newEdgeIds: string[] = [];
+    const linked: string[] = [];
+    const nodeOf = new Map<string, string>(); // 设定 id → 画布节点 id
+    const linkedNow = new Set<string>(); // 这次新连上的
+    for (const m of matches) {
+      const label = `${m.setting.name}${m.image?.note ? `·${m.image.note}` : ''}`;
+      // ① 已经连着 → 直接用
+      let id = srcIds.find((sid) => sameAs(getNode(sid) as Node<NodeData> | undefined, m));
+      if (!id) {
+        // ② 画布上已经有这张图 → 连过来；③ 没有 → 新建一个图片节点
+        const existing = (getNodes() as Node<NodeData>[]).find((n) => n.id !== nodeId && sameAs(n, m));
+        if (existing) {
+          id = existing.id;
+          const eid = newId('e_');
+          addEdges({ id: eid, source: id, target: nodeId });
+          newEdgeIds.push(eid);
+          sources.push({ id, data: existing.data });
+        } else {
+          const title = `${m.setting.name}${m.image?.note ? ` · ${m.image.note}` : ''}（${SETTING_WORD[settingKind(m.setting)]}）`;
+          const version = m.image ? { kind: 'image' as const, file: m.image.file, label: '设定库', variant: m.image.note || undefined } : undefined;
+          id = addNode('image', leftOf((media.length + createdNodes.length) * 300), { title, characterId: m.setting.id, version, connectTo: nodeId });
+          createdNodes.push(id);
+          sources.push({
+            id,
+            data: { kind: 'image', title, characterId: m.setting.id, versions: version ? [{ ...version, id: 'tmp', createdAt: '' }] : [], current: version ? 0 : -1, gen: data.gen },
+          });
+        }
+        linked.push(label);
+        linkedNow.add(id);
+      }
+      nodeOf.set(m.setting.id, id);
+    }
+    // 现在的模式用不了参考图（文生图 / 文生视频）→ 换成能带参考图的模式
+    let nextMode = mode;
+    if (!(mode?.maxRefs.image || 0)) nextMode = model?.modes.find((x) => x.id === 'omni') || model?.modes.find((x) => (x.maxRefs.image || 0) > 0) || mode;
+    // 按连接顺序算出每张图的编号，在名字第一次出现的地方后面插（@图N）
+    const tokenOf = new Map(collectInputs(sources, data.gen, nextMode).media.map((x) => [x.nodeId, x.token]));
+    let next = text;
+    for (const m of [...matches].sort((a, b) => b.index - a.index)) {
+      const tok = tokenOf.get(nodeOf.get(m.setting.id) || '');
+      const end = m.index + m.setting.name.trim().length;
+      if (!tok || /^（@/.test(next.slice(end))) continue;
+      next = `${next.slice(0, end)}（${tok}）${next.slice(end)}`;
+    }
+    // 记下哪些是自动连的：这次新连的 + 上次自动连、这次还用得上的
+    const autoLinked = [...new Set(nodeOf.values())].filter((id) => linkedNow.has(id) || prevAuto.includes(id));
+    setPromptLocal(next);
+    updateNodeData(nodeId, { gen: { ...data.gen, prompt: next, mode: nextMode?.id || data.gen.mode }, autoLinked });
+    const names = matches.map((m) => m.setting.name).join('、');
+    const dropped = staleEdges.map((e) => (getNode(e.source)?.data as NodeData | undefined)?.title?.replace(/（.*$/, '') || '').filter(Boolean);
+    toast(
+      (linked.length ? `已自动引用：${names}（新连了 ${linked.length} 张：${linked.join('、')}）` : `已标好引用：${names}（图都已经连着）`) +
+        (dropped.length ? `；这段没提到的已断开：${dropped.join('、')}` : ''),
+      'info',
+      {
+        label: '撤销',
+        onClick: () => {
+          deleteElements({ nodes: createdNodes.map((id) => ({ id })), edges: newEdgeIds.map((id) => ({ id })) });
+          if (staleEdges.length) addEdges(staleEdges);
+          setPromptLocal(before.prompt);
+          updateNodeData(nodeId, { gen: { ...data.gen, prompt: before.prompt, mode: before.mode }, autoLinked: before.autoLinked });
+        },
+      },
+    );
+  };
+
   const translate = async () => {
     if (!textModel) return toast('还没有可用的文本模型，去「模型管理」接一个', 'error');
     if (!prompt.trim()) return;
@@ -272,6 +361,11 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
         <button className="chip" onClick={() => refInput.current?.click()} title="上传一张图 / 一段视频 / 音频作为参考，自动连到这个节点">
           <Plus size={14} /> 参考
         </button>
+        {(data.kind === 'image' || data.kind === 'video') && characters.length > 0 && (
+          <button className="chip" onClick={() => autoLink(prompt)} title="智能引用：提示词里提到了设定库里的谁（台词里的不算），就把那张图连进来，并在名字后面标上（@图N）。粘贴提示词时会自动做一次">
+            <Wand2 size={14} /> 智能引用
+          </button>
+        )}
         {data.kind !== 'text' && data.kind !== 'audio' && (
           <>
             <span className="chip-wrap">
@@ -434,6 +528,12 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
           value={prompt}
           placeholder={PLACEHOLDER[data.kind]}
           onChange={(e) => onPromptChange(e.target.value, e.target.selectionStart)}
+          // 粘贴一段提示词：自动把里面提到的角色 / 场景引用进来
+          onPaste={(e) => {
+            const pasted = e.clipboardData.getData('text');
+            if (!pasted || pasted.length < 4 || !characters.length) return;
+            setTimeout(() => taRef.current && autoLink(taRef.current.value, true), 0);
+          }}
           onKeyDown={(e) => {
             if (at && atOptions.length && (e.key === 'Enter' || e.key === 'Tab')) {
               e.preventDefault();

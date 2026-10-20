@@ -220,6 +220,8 @@ export interface NodeData {
   firstFrame?: string;
   /** 尾帧是从上一条的哪个版本截的（上一条换了版本就重截） */
   chainFrom?: string;
+  /** 智能引用自动连进来的参考图节点（换提示词时，没再提到的会自动断开；手动连的不在这里） */
+  autoLinked?: string[];
   [key: string]: unknown;
 }
 

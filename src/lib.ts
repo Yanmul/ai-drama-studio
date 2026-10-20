@@ -151,3 +151,42 @@ export const SETTING_WORD: Record<SettingKind, string> = { character: '角色', 
 export const settingKind = (c?: Character): SettingKind => c?.kind || 'character';
 /** 设定的全部图（旧数据只有 image 一张） */
 export const settingImages = (c?: Character): SettingImage[] => (c?.images?.length ? c.images : c?.image ? [{ file: c.image }] : []);
+
+// —— 智能引用：在提示词里找设定库的名字（规则匹配，不靠大模型） ——
+export interface SettingMatch {
+  setting: Character;
+  /** 用设定的哪一张图（提示词里出现了某张图的备注就用那张，否则主图） */
+  image?: SettingImage;
+  /** 名字在提示词里第一次出现的位置（台词里的不算） */
+  index: number;
+}
+
+/**
+ * 规则：
+ * 1. 台词（"…" “…” 「…」里）不算——林骁说「苏婉啊」不代表苏婉在镜头里；
+ * 2. 长名字先匹配：「老周办公室」里的「老周」不再单独算；
+ * 3. 少于 2 个字的名字不匹配（误伤太多）；
+ * 4. 设定有多张图时，提示词里出现了哪张图的备注（如「傍晚」）就用哪张。
+ */
+export function matchSettings(prompt: string, settings: Character[]): SettingMatch[] {
+  // 台词、已插入的 @标记 用同长度空白盖住，位置不变
+  const masked = prompt.replace(/"[^"]*"|“[^”]*”|「[^」]*」|（@[^）]*）|@(图|视频|音频)\d+/g, (m) => ' '.repeat(m.length));
+  const covered: [number, number][] = [];
+  const inCovered = (a: number, b: number) => covered.some(([x, y]) => a < y && b > x);
+  const out: SettingMatch[] = [];
+  const sorted = settings.filter((c) => c.name && c.name.trim().length >= 2).sort((a, b) => b.name.length - a.name.length);
+  for (const c of sorted) {
+    const name = c.name.trim();
+    let first = -1;
+    for (let i = masked.indexOf(name); i >= 0; i = masked.indexOf(name, i + 1)) {
+      if (inCovered(i, i + name.length)) continue;
+      if (first < 0) first = i;
+      covered.push([i, i + name.length]);
+    }
+    if (first < 0) continue;
+    const imgs = settingImages(c);
+    const noted = imgs.filter((im) => im.note && masked.includes(im.note)).sort((a, b) => (b.note || '').length - (a.note || '').length);
+    out.push({ setting: c, image: noted[0] || imgs[0], index: first });
+  }
+  return out.sort((a, b) => a.index - b.index);
+}
