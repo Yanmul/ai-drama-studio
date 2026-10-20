@@ -25,7 +25,8 @@ import { AddNodeMenu, type AddMenuAction } from './components/AddNodeMenu';
 import { CanvasContext, useApp, useJobs, type CanvasCtx } from './context';
 import { buildRequest, estimateCostNumber } from './inputs';
 import { pruneDeletedVersions } from '../shared/cleanup';
-import { KIND_CAP, KIND_LABEL, SETTING_WORD, activeVersion, emptyGen, fileKind, makeNodeData, newId, pickModel, settingImages, settingKind } from './lib';
+import { KIND_CAP, KIND_LABEL, SETTING_WORD, activeVersion, batchProgress, emptyGen, fileKind, makeNodeData, newId, pickModel, settingImages, settingKind } from './lib';
+import { askNotifyPermission, notify } from './notify';
 import { MediaNode, grabAt } from './nodes/MediaNode';
 import { FlowEdge } from './edges/FlowEdge';
 import { SelectionBar } from './components/SelectionBar';
@@ -561,6 +562,24 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     [project.id, addNode],
   );
 
+  /** 这些节点连着的设定（角色 / 场景 / 道具）里，哪些还没有图：名字 → 用到它的片段 */
+  const missingImages = (ids: string[]) => {
+    const out = new Map<string, string[]>();
+    for (const id of ids) {
+      const n = rf.getNode(id) as FlowNode | undefined;
+      if (!n) continue;
+      for (const e of rf.getEdges().filter((x) => x.target === id)) {
+        const s = rf.getNode(e.source) as FlowNode | undefined;
+        if (!s?.data.characterId || activeVersion(s.data)?.file) continue;
+        const name = s.data.title.replace(/（.*$/, '').trim();
+        out.set(name, [...(out.get(name) || []), n.data.title]);
+      }
+    }
+    return out;
+  };
+  const missingText = (m: Map<string, string[]>) =>
+    [...m].map(([name, used]) => `· ${name}（用在 ${used.slice(0, 4).join('、')}${used.length > 4 ? ` 等 ${used.length} 条` : ''}）`).join('\n');
+
   /** 标了「接上一条尾帧」、但尾帧还没连上 */
   const needsFrame = (n?: FlowNode) =>
     Boolean(n?.data.chainPrev && !(n.data.firstFrame && rf.getEdges().some((e) => e.source === n.data.firstFrame && e.target === n.id)));
@@ -569,7 +588,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     jobsRef.current.filter((j) => j.request.nodeId === nodeId && j.request.episodeId === episode.id && (j.status === 'queued' || j.status === 'running')).length;
 
   const submit = useCallback(
-    async (nodeId: string, opts: { skipBusyCheck?: boolean; quiet?: boolean } = {}) => {
+    async (nodeId: string, opts: { skipBusyCheck?: boolean; quiet?: boolean; skipMissingCheck?: boolean } = {}) => {
       const n = rf.getNode(nodeId) as FlowNode | undefined;
       if (!n) return;
       const cap = KIND_CAP[n.data.kind];
@@ -588,6 +607,19 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
         });
         if (!ok) return false;
       }
+      if (!opts.skipMissingCheck) {
+        const miss = missingImages([nodeId]);
+        if (miss.size) {
+          const ok = await confirmDialog({
+            title: '有参考还没有图',
+            message: `${missingText(miss)}\n\n提示词里只写了名字，没有图的话模型不知道他们长什么样，生成出来多半不像。先去设定库补上图再生成更稳。`,
+            okText: '仍然生成',
+            cancelText: '先去补图',
+          });
+          if (!ok) return false;
+        }
+      }
+      askNotifyPermission();
       if (needsFrame(n) && !opts.quiet) {
         const prev = rf.getNode(n.data.chainPrev!) as FlowNode | undefined;
         const ok = await confirmDialog({
@@ -646,12 +678,14 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
         else total += c;
       }
       const busy = ids.filter((id) => activeOf(id) > 0).length;
+      const miss = missingImages(ids);
       const ok = await confirmDialog({
         title: `一次生成 ${ids.length} 个节点？`,
         message: [
           `预估花费 ¥${total.toFixed(2)}${unknown ? `（另有 ${unknown} 个模型没填单价，没算进去）` : ''}`,
           busy ? `其中 ${busy} 个节点已经有任务在生成，会再各提交一个。` : '',
           waiting.length ? `另有 ${waiting.length} 条要接上一条的尾帧，这次先不生成——上一条生成好后尾帧会自动连上，再生成它们。` : '',
+          miss.size ? `\n⚠️ 这些参考还没有图（只写了名字，模型不知道长什么样）：\n${missingText(miss)}` : '',
         ]
           .filter(Boolean)
           .join('\n'),
@@ -659,7 +693,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       });
       if (!ok) return;
       let done = 0;
-      for (const id of ids) if (await submit(id, { skipBusyCheck: true, quiet: true })) done += 1;
+      for (const id of ids) if (await submit(id, { skipBusyCheck: true, quiet: true, skipMissingCheck: true })) done += 1;
       if (done) toast(done === ids.length ? `已提交 ${done} 个节点，生成好了会自动出现在各自节点里` : `已提交 ${done} 个，另外 ${ids.length - done} 个没提交上（见上面的提示）`);
     },
     [submit, models],
@@ -865,7 +899,12 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
             rf.addEdges({ id: newId('e_'), source: id, target: n.id });
             rf.updateNodeData(n.id, { firstFrame: id, chainFrom: v.id });
           }
-          toast(`「${prev.data.title}」的最后一帧已连到「${cur.data.title}」当首帧，可以生成它了`);
+          if (cur.data.autoRun) {
+            // 整集生成里等着的：尾帧连上了就自动开始
+            rf.updateNodeData(n.id, { autoRun: undefined });
+            setTimeout(() => submitRef.current(n.id, { skipBusyCheck: true, quiet: true, skipMissingCheck: true }), 300);
+            toast(`「${prev.data.title}」的最后一帧已连到「${cur.data.title}」，自动开始生成`);
+          } else toast(`「${prev.data.title}」的最后一帧已连到「${cur.data.title}」当首帧，可以生成它了`);
         } catch (e: any) {
           chainFailed.current.add(key);
           toast(`截「${prev.data.title}」的尾帧失败：${e.message || e}——可以在它的视频右上角点相机手动截尾帧，再连到下一条`, 'error');
@@ -876,11 +915,77 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
     }
   }, [nodes, loaded]);
 
+  // —— 整集生成：成片节点上点「生成全部片段」 ——
+  const runClips: CanvasCtx['runClips'] = useCallback(
+    async (cutId, ids) => {
+      const vids = ids.filter((id) => (rf.getNode(id) as FlowNode | undefined)?.data.kind === 'video');
+      if (!vids.length) return toast('成片节点上还没有连视频片段', 'error');
+      // 已经有视频的默认不重做，只生成还没生成的
+      const todo = vids.filter((id) => !activeVersion((rf.getNode(id) as FlowNode).data)?.file && !activeOf(id));
+      if (!todo.length) return toast('这些片段都已经生成过了（要重做某条，点进去单独生成）');
+      let total = 0;
+      let unknown = 0;
+      for (const id of todo) {
+        const n = rf.getNode(id) as FlowNode;
+        const m = models.find((x) => x.id === n.data.gen.modelId) || pickModel(models, 'video');
+        const c = m ? estimateCostNumber(m, { ...n.data.gen.params }) : undefined;
+        if (c === undefined) unknown += 1;
+        else total += c;
+      }
+      const chained = todo.filter((id) => (rf.getNode(id) as FlowNode).data.chainPrev).length;
+      const miss = missingImages(todo);
+      const ok = await confirmDialog({
+        title: `生成整集：${todo.length} 条片段`,
+        message: [
+          `预估花费 ¥${total.toFixed(2)}${unknown ? `（另有 ${unknown} 条的模型没填单价，没算进去）` : ''}`,
+          vids.length > todo.length ? `已经有视频的 ${vids.length - todo.length} 条不重做。` : '',
+          chained ? `其中 ${chained} 条要接上一条的尾帧：上一条生成好后会自动截尾帧、连上、再开始生成，不用你管。` : '',
+          '全部完成后会提醒你（不在这个页面也会弹系统通知）。',
+          miss.size ? `\n⚠️ 这些参考还没有图（只写了名字，模型不知道长什么样）：\n${missingText(miss)}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        okText: `开始生成 ${todo.length} 条`,
+      });
+      if (!ok) return;
+      askNotifyPermission();
+      rf.updateNodeData(cutId, { batch: { startedAt: new Date().toISOString(), clips: todo } });
+      let sent = 0;
+      for (const id of todo) {
+        if (needsFrame(rf.getNode(id) as FlowNode)) rf.updateNodeData(id, { autoRun: true });
+        else if (await submit(id, { skipBusyCheck: true, quiet: true, skipMissingCheck: true })) sent += 1;
+      }
+      toast(`整集生成开始：先提交了 ${sent} 条${todo.length > sent ? `，另外 ${todo.length - sent} 条等上一条的尾帧自动开始` : ''}`);
+    },
+    [models, submit],
+  );
+  const submitRef = useRef(submit);
+  submitRef.current = submit;
+
+  // 整集生成跑完了：提醒一下（不在页面时弹系统通知）
+  useEffect(() => {
+    if (!loaded) return;
+    for (const n of nodes) {
+      const batch = n.data.batch as { startedAt: string; clips: string[] } | undefined;
+      if (n.data.kind !== 'cut' || !batch) continue;
+      const pr = batchProgress(batch, jobs, (id) => (nodes.find((x) => x.id === id)?.data as NodeData | undefined));
+      if (!pr.finished) continue;
+      rf.updateNodeData(n.id, { batch: undefined });
+      for (const id of batch.clips) if ((rf.getNode(id) as FlowNode | undefined)?.data.autoRun) rf.updateNodeData(id, { autoRun: undefined });
+      const bad = pr.failed + pr.blocked;
+      const msg = bad
+        ? `「${n.data.title}」整集生成结束：成功 ${pr.done} 条，失败 ${pr.failed} 条${pr.blocked ? `，${pr.blocked} 条因为上一条失败没法接尾帧` : ''}——失败的点进去单独重试`
+        : `「${n.data.title}」整集 ${pr.done} 条全部生成好了，可以点「拼接」出成片`;
+      toast(msg, bad ? 'error' : 'info');
+      notify(bad ? '整集生成结束（有失败）' : '整集生成好了', msg, !bad);
+    }
+  }, [jobs, nodes, loaded]);
+
   const openAddMenu: CanvasCtx['openAddMenu'] = useCallback((screen, opts) => setMenu({ ...screen, ...opts }), []);
 
   const ctx: CanvasCtx = useMemo(
-    () => ({ addNode, uploadAsNode, submit, submitMany, toFlow: (p) => rf.screenToFlowPosition(p), openAddMenu, expandScript }),
-    [addNode, uploadAsNode, submit, submitMany, openAddMenu, expandScript],
+    () => ({ addNode, uploadAsNode, submit, submitMany, runClips, toFlow: (p) => rf.screenToFlowPosition(p), openAddMenu, expandScript }),
+    [addNode, uploadAsNode, submit, submitMany, runClips, openAddMenu, expandScript],
   );
 
   // —— 选中节点时，让节点和下面的生成面板整个露出来（不被屏幕边、左侧工具栏、小地图挡住） ——
@@ -1190,7 +1295,8 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           defaultEdgeOptions={{ type: 'default' }}
         >
           <Background variant={BackgroundVariant.Dots} gap={24} size={1.3} color="#2a2a31" />
-          <MiniMap position="bottom-right" pannable zoomable nodeColor="#3a3a3a" maskColor="rgba(0,0,0,.55)" />
+          {/* 选中一个节点时下面会弹出生成面板，小地图会盖住面板右下角：这时先藏起来 */}
+          {nodes.filter((n) => n.selected).length !== 1 && <MiniMap position="bottom-right" pannable zoomable nodeColor="#3a3a3a" maskColor="rgba(0,0,0,.55)" />}
           <SelectionBar
             undo={undo}
             onDone={() =>

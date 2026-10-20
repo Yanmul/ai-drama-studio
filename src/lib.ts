@@ -1,4 +1,4 @@
-import type { Capability, Character, GenState, ModelInfo, NodeData, NodeKind, SettingImage, SettingKind, Version } from '../shared/types';
+import type { Capability, Character, GenState, Job, ModelInfo, NodeData, NodeKind, SettingImage, SettingKind, Version } from '../shared/types';
 
 export const newId = (p = 'n_') => p + Math.random().toString(36).slice(2, 10);
 
@@ -213,4 +213,31 @@ export function matchSettings(prompt: string, settings: Character[]): SettingMat
     out.push({ setting: c, image: noted[0] || imgs[0], index: first });
   }
   return out.sort((a, b) => a.index - b.index);
+}
+
+// —— 整集生成：进度统计 ——
+export interface EpisodeBatch {
+  startedAt: string;
+  clips: string[];
+}
+export type ClipState = 'done' | 'running' | 'failed' | 'waiting' | 'blocked';
+
+/** 每条片段这一轮的状态：生成好了 / 在生成 / 失败 / 等上一条尾帧 / 上一条失败了接不上 */
+export function batchProgress(batch: EpisodeBatch, jobs: Job[], dataOf: (id: string) => NodeData | undefined) {
+  const state = new Map<string, ClipState>();
+  for (const id of batch.clips) {
+    const js = jobs.filter((j) => j.request.nodeId === id && j.createdAt >= batch.startedAt);
+    if (js.some((j) => j.status === 'succeeded')) state.set(id, 'done');
+    else if (js.some((j) => j.status === 'queued' || j.status === 'running')) state.set(id, 'running');
+    else if (js.some((j) => j.status === 'failed' || j.status === 'cancelled')) state.set(id, 'failed');
+    else state.set(id, 'waiting');
+  }
+  // 等着接尾帧、但上一条失败了 → 接不上了
+  for (const id of batch.clips) {
+    const prev = dataOf(id)?.chainPrev;
+    if (state.get(id) === 'waiting' && prev && (state.get(prev) === 'failed' || state.get(prev) === 'blocked')) state.set(id, 'blocked');
+  }
+  const count = (s: ClipState) => [...state.values()].filter((x) => x === s).length;
+  const r = { done: count('done'), running: count('running'), failed: count('failed'), waiting: count('waiting'), blocked: count('blocked'), total: batch.clips.length };
+  return { ...r, finished: r.running === 0 && r.waiting === 0, state };
 }

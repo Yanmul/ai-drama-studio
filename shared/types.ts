@@ -141,6 +141,8 @@ export interface GenerateRequest {
   noStyle?: boolean;
   /** 这张参考图是首帧（接上一条的尾帧）：提示词开头会写「首帧为图片N」 */
   firstFrameNodeId?: string;
+  /** 节点标题（通知里显示「片段3 生成好了」用） */
+  nodeTitle?: string;
 }
 
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
@@ -222,6 +224,10 @@ export interface NodeData {
   chainFrom?: string;
   /** 智能引用自动连进来的参考图节点（换提示词时，没再提到的会自动断开；手动连的不在这里） */
   autoLinked?: string[];
+  /** 整集生成：这条在等上一条的尾帧，连上后自动开始生成 */
+  autoRun?: boolean;
+  /** 成片节点：正在跑的整集生成（开始时间 + 哪些片段） */
+  batch?: { startedAt: string; clips: string[] };
   [key: string]: unknown;
 }
 

@@ -2,11 +2,11 @@
 // 每段用定稿（⭐）版，没定稿用当前显示的那一版。
 import { useNodeConnections, useNodesData, useReactFlow, type Node } from '@xyflow/react';
 import { useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, Film, Loader2, Scissors, Star } from 'lucide-react';
+import { ArrowDown, ArrowUp, Film, Loader2, Play, Scissors, Star } from 'lucide-react';
 import type { NodeData, Version } from '../../shared/types';
 import { api, fileUrl } from '../api';
-import { useApp } from '../context';
-import { activeVersion, fileKind, newId } from '../lib';
+import { useApp, useCanvas, useJobs } from '../context';
+import { activeVersion, batchProgress, fileKind, newId } from '../lib';
 
 const fmtSec = (s: number) => (s >= 60 ? `${Math.floor(s / 60)}分${Math.round(s % 60)}秒` : `${s.toFixed(1)}秒`);
 
@@ -18,6 +18,8 @@ export function CutPanel({ nodeId, data }: { nodeId: string; data: NodeData }) {
   const srcNodes = useNodesData<Node<NodeData>>(srcIds);
   const [durations, setDurations] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
+  const { runClips } = useCanvas();
+  const jobs = useJobs();
 
   // 顺序：保存过的顺序在前；新连进来的按画布位置排（从上到下，同一行从左到右）
   const saved = ((data.clips as string[] | undefined) || []).filter((id) => srcIds.includes(id));
@@ -37,6 +39,10 @@ export function CutPanel({ nodeId, data }: { nodeId: string; data: NodeData }) {
     return { id, title: d?.title || '（节点已删除）', file, starred: Boolean(d?.starred && d.starred === v?.id), on: !skip.has(id) };
   });
   const use = items.filter((x) => x.on && x.file);
+  // 还没生成视频的片段数；整集生成的进度
+  const missingCount = items.filter((x) => !x.file).length;
+  const batch = data.batch as { startedAt: string; clips: string[] } | undefined;
+  const progress = batch ? batchProgress(batch, jobs, (id) => (getNode(id)?.data as NodeData | undefined)) : null;
   const total = use.reduce((s, x) => s + (durations[x.file!] || 0), 0);
 
   const move = (i: number, d: -1 | 1) => {
@@ -137,9 +143,29 @@ export function CutPanel({ nodeId, data }: { nodeId: string; data: NodeData }) {
           ))}
         </div>
       )}
+      {batch && progress && (
+        <div className="cut-progress">
+          <div className="cut-progress-bar">
+            <span style={{ width: `${(progress.done / progress.total) * 100}%` }} />
+            <span className="fail" style={{ width: `${((progress.failed + progress.blocked) / progress.total) * 100}%` }} />
+          </div>
+          <span>
+            整集生成中：完成 {progress.done} / {progress.total}
+            {progress.running ? ` · 生成中 ${progress.running}` : ''}
+            {progress.waiting ? ` · 等上一条尾帧 ${progress.waiting}` : ''}
+            {progress.failed ? ` · 失败 ${progress.failed}` : ''}
+            {progress.blocked ? ` · 接不上 ${progress.blocked}` : ''}
+          </span>
+        </div>
+      )}
       <div className="bar">
         <span className="muted cut-tip">每段用定稿版（没定稿用当前版）；尺寸统一成第一段的，比例不同加黑边；用本机 ffmpeg，不花钱</span>
         <span className="spacer" />
+        {missingCount > 0 && !batch && (
+          <button className="ghost cut-run" onClick={() => runClips(nodeId, ids)} title="按顺序把还没生成的片段都生成了；要接上一条尾帧的，等上一条好了自动截尾帧再开始">
+            <Play size={14} /> 生成全部片段（{missingCount}）
+          </button>
+        )}
         <button className="primary cut-go" onClick={go} disabled={busy || !use.length}>
           {busy ? <Loader2 size={15} className="spin" /> : <Scissors size={15} />} {busy ? '拼接中…' : '拼接'}
         </button>

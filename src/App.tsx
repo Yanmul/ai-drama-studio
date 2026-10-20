@@ -2,6 +2,7 @@ import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, Clapperboard, ListChecks, MessageCircle, Plus, Settings, SlidersHorizontal } from 'lucide-react';
 import { ChatPanel } from './components/ChatPanel';
+import { notify } from './notify';
 import type { Character, Episode, Job, ModelInfo, Project, ServerEvent, StylePreset } from '../shared/types';
 import { api } from './api';
 import { Canvas } from './Canvas';
@@ -187,6 +188,10 @@ export function App() {
           return next;
         });
         if (j.status === 'failed') noteFailure(j.error || '未知错误');
+        // 你不在这个页面时：完成 / 失败弹系统通知
+        const name = j.request.nodeTitle || j.modelName || '任务';
+        if (j.status === 'succeeded') notify('生成好了', `「${name}」`, true);
+        else if (j.status === 'failed') notify('生成失败', `「${name}」：${(j.error || '').slice(0, 60)}`, false);
       };
     };
     connect();

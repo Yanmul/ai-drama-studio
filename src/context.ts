@@ -46,7 +46,9 @@ export interface CanvasCtx {
   uploadAsNode: (file: File, pos: { x: number; y: number }, connectTo?: string) => Promise<void>;
   /** skipBusyCheck：已确认过「这个节点已有任务在跑」时不再问 */
   /** 返回是否真的提交了 */
-  submit: (nodeId: string, opts?: { skipBusyCheck?: boolean; quiet?: boolean }) => Promise<boolean | void>;
+  submit: (nodeId: string, opts?: { skipBusyCheck?: boolean; quiet?: boolean; skipMissingCheck?: boolean }) => Promise<boolean | void>;
+  /** 整集生成：按顺序生成这些片段（要接尾帧的等上一条好了自动开始） */
+  runClips: (cutId: string, ids: string[]) => Promise<void>;
   /** 一次生成多个节点（会先确认数量和预估花费） */
   submitMany: (nodeIds: string[]) => Promise<void>;
   /** 把屏幕坐标换成画布坐标 */
