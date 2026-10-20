@@ -16,6 +16,7 @@ import {
   Minimize2,
   Palette,
   Plus,
+  Replace,
   Settings2,
   ShieldCheck,
   Volume2,
@@ -28,6 +29,20 @@ import { SettingPicker } from './SettingPicker';
 import { dropKind, useFileDrop } from '../useFileDrop';
 import { styleName } from './StylePicker';
 import { api, fileUrl } from '../api';
+
+/** Wan 3.0 换人 / 换动作的提示词模板。@视频1 给动作和镜头，@图1 给人 */
+const SWAP_TEMPLATES = [
+  {
+    label: '换人',
+    tip: '动作、镜头、背景都照搬视频，只把人换掉',
+    text: '把@视频1 中的【要换掉的人】替换为@图1 中的人物，人物的动作、走位、表情节奏与@视频1 完全一致，镜头运动、背景和光线保持不变。',
+  },
+  {
+    label: '换动作',
+    tip: '人和场景用图，动作照搬视频',
+    text: '让@图1 中的人物做出@视频1 中的动作，动作幅度、节奏和走位与@视频1 一致，人物外观、背景和光线以@图1 为准。',
+  },
+];
 import { useApp, useCanvas, useNodeJobs } from '../context';
 import { buildRequest, collectInputs, estimateCost } from '../inputs';
 import { CAMERA_MOVES, KIND_CAP, KIND_LABEL, SETTING_WORD, activeVersion, defaultParams, fileKind, matchSettings, newId, rememberGen, settingImages, settingKind } from '../lib';
@@ -72,7 +87,7 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
   const srcIds = useMemo(() => conns.map((c) => c.source), [conns]);
   const srcNodes = useNodesData<Node<NodeData>>(srcIds);
   const [expanded, setExpanded] = useState(false);
-  const [pop, setPop] = useState<'' | 'params' | 'advanced' | 'camera' | 'chars' | 'model' | 'mode' | 'final' | 'style'>('');
+  const [pop, setPop] = useState<'' | 'params' | 'advanced' | 'camera' | 'chars' | 'model' | 'mode' | 'final' | 'style' | 'swap'>('');
   const [finalPrompt, setFinalPrompt] = useState<{ loading?: boolean; text?: string; error?: string }>({});
   // @ 菜单：start = @ 的位置，end = 输入 @ 时的光标位置（插入引用时替换这一段）
   const [at, setAt] = useState<{ start: number; end: number; q: string } | null>(null);
@@ -390,6 +405,29 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
                 <SettingPicker settings={characters} onPick={addSetting} onManage={() => (setPop(''), openCharacters())} />
               </Popover>
             </span>
+            {data.kind === 'video' && model?.preset === 'wan-video' && (
+              <span className="chip-wrap">
+                <button className="chip" onClick={() => setPop(pop === 'swap' ? '' : 'swap')} title="Wan 换人 / 换动作：连一段参考视频（动作）和一张人物图，选个模板。参考视频合计不超过 15 秒，按「参考视频 + 输出」的总时长计费">
+                  <Replace size={14} /> 换人 / 换动作
+                </button>
+                <Popover open={pop === 'swap'} onClose={() => setPop('')} placement="bottom" className="list-pop">
+                  {SWAP_TEMPLATES.map((t) => (
+                    <button
+                      key={t.label}
+                      className="list-item"
+                      title={t.text}
+                      onClick={() => {
+                        setPrompt(t.text);
+                        if (mode?.id !== 'omni' && model.modes.some((m) => m.id === 'omni')) setGen({ mode: 'omni', prompt: t.text });
+                        setPop('');
+                      }}
+                    >
+                      {t.label}<span className="muted">　{t.tip}</span>
+                    </button>
+                  ))}
+                </Popover>
+              </span>
+            )}
             {data.kind === 'video' && (
               <span className="chip-wrap">
                 <button className="chip" onClick={() => setPop(pop === 'camera' ? '' : 'camera')}>

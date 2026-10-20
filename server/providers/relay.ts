@@ -2,8 +2,9 @@
 // 各家中转站接口不完全一样，所以每个模型单独选「接口格式」：
 //   openai-chat    文本，POST {base}/chat/completions
 //   openai-images  生图，POST {base}/images/generations；有参考图时走 {base}/images/edits
-//   openai-videos  视频，OpenAI 风格统一视频接口：POST {base}/videos 提交，GET {base}/videos/{id} 查询，
-//                  GET {base}/videos/{id}/content 下载（要带 key）。New API 类中转站（如 AI派）的视频模型都走这个
+//   openai-videos  视频，OpenAI 风格统一视频接口：POST {base}/video/generations 提交（不通再试 {base}/videos），
+//                  GET {base}/videos/{id} 查询，有 video_url 直接下，没有就 GET {base}/videos/{id}/content（要带 key）。
+//                  New API 类中转站（如 AI派）的视频模型都走这个
 //   ark-image / ark-video  中转站原样转发火山方舟格式时，直接复用火山适配器的代码
 //   custom         自定义模板：填好提交地址、请求体、查询地址、各字段在哪，不写代码接新模型
 // 注意（来自 jewelry-image-studio 的经验）：像 4sapi 这类网关按 key 分组，不同分组能用的模型不同，
@@ -121,6 +122,28 @@ function resolutionOf(model: string, params: PreparedRequest['params']): string 
   return undefined;
 }
 
+const isWan = (model: string) => /^wan[-_]/i.test(model);
+
+/** Wan 要宽高。AI派只认标准尺寸（480p 16:9 实测必须 854x480，848、832 都会被拒） */
+const WAN_SIZE: Record<string, Record<string, [number, number]>> = {
+  '480p': { '16:9': [854, 480], '9:16': [480, 854], '1:1': [480, 480], '4:3': [640, 480], '3:4': [480, 640], '21:9': [1120, 480] },
+  '720p': { '16:9': [1280, 720], '9:16': [720, 1280], '1:1': [720, 720], '4:3': [960, 720], '3:4': [720, 960], '21:9': [1680, 720] },
+  '1080p': { '16:9': [1920, 1080], '9:16': [1080, 1920], '1:1': [1080, 1080], '4:3': [1440, 1080], '3:4': [1080, 1440], '21:9': [2520, 1080] },
+};
+
+/** Wan 的参考素材：AI派文档写的是 reference_assets，但实测只放它不生效；
+ *  下面这几种放法一起带上就生效了（2026-10-20 测过：教室和动作照搬视频1、人换成图1）。用公网地址 */
+function wanRefFields(items: { kind: 'image' | 'video' | 'audio'; url: string }[]) {
+  const assets = items.map((r) => ({ type: r.kind, url: r.url }));
+  const media = items.map((r) => ({ type: REF_ROLE[r.kind], url: r.url }));
+  const of = (k: string) => items.filter((r) => r.kind === k).map((r) => r.url);
+  const f: Record<string, unknown> = { reference_assets: assets, media, metadata: { reference_assets: assets, media, input: { media } } };
+  if (of('image').length) { f.image = of('image')[0]; f.images = of('image'); }
+  if (of('video').length) { f.video = of('video')[0]; f.videos = of('video'); }
+  if (of('audio').length) { f.audio = of('audio')[0]; f.audios = of('audio'); }
+  return f;
+}
+
 async function openaiVideosSubmit(ctx: AdapterContext, req: PreparedRequest): Promise<SubmitResult> {
   const p = req.params;
   const model = ctx.model.remoteModel;
@@ -136,11 +159,22 @@ async function openaiVideosSubmit(ctx: AdapterContext, req: PreparedRequest): Pr
   };
   const resolution = resolutionOf(model, p);
   if (resolution) body.resolution = resolution;
+  if (isWan(model)) {
+    const tier = (resolution || '480p').toLowerCase();
+    const wh = WAN_SIZE[tier]?.[ratio];
+    body.size = ratio;
+    body.resolution = tier.toUpperCase();
+    if (wh) [body.width, body.height] = wh;
+  }
   if (p.generate_audio !== undefined) body.generate_audio = Boolean(p.generate_audio);
   if (p.seed !== undefined && Number(p.seed) >= 0) body.seed = Number(p.seed);
   // 参考素材放在顶层 content 数组里，每项一个唯一 name；提示词里的 @图1 已经换成同名的 image_1
   const refs = req.mode === 't2v' ? [] : req.refs;
-  if (refs.length) {
+  if (refs.length && isWan(model)) {
+    const items = [];
+    for (const r of refs) items.push({ kind: r.kind, url: await refUrl(ctx, r) });
+    Object.assign(body, wanRefFields(items));
+  } else if (refs.length) {
     const count = { image: 0, video: 0, audio: 0 };
     const content: any[] = [{ type: 'text', text: req.prompt }];
     for (const r of refs) {
@@ -155,7 +189,14 @@ async function openaiVideosSubmit(ctx: AdapterContext, req: PreparedRequest): Pr
       body.function_mode = 'omni_reference';
     }
   }
-  const data = await httpJson<any>(joinUrl(base(ctx), 'videos'), { headers: headers(ctx), body, timeoutMs: 120_000 });
+  // AI派的 POST /v1/videos 一直 301 死循环，所以先走 /video/generations；别家没有这个地址（404/405）再退回 /videos
+  let data: any;
+  try {
+    data = await httpJson<any>(joinUrl(base(ctx), 'video/generations'), { headers: headers(ctx), body, timeoutMs: 120_000 });
+  } catch (e) {
+    if (!/\b(404|405)\b/.test(String((e as Error)?.message))) throw e;
+    data = await httpJson<any>(joinUrl(base(ctx), 'videos'), { headers: headers(ctx), body, timeoutMs: 120_000 });
+  }
   const id = data?.id ?? data?.data?.id ?? (typeof data?.data === 'string' ? data.data : undefined) ?? data?.task_id;
   if (!id) throw new AdapterError(`中转站没有返回任务号：${JSON.stringify(data).slice(0, 300)}`);
   return { kind: 'pending', remoteId: String(id) };
@@ -167,7 +208,9 @@ async function openaiVideosPoll(ctx: AdapterContext, remoteId: string): Promise<
   const d = data?.data && typeof data.data === 'object' ? data.data : {};
   const status = String(data?.status ?? d.status ?? '').toLowerCase();
   if (['completed', 'succeeded', 'success'].includes(status)) {
-    // 结果统一从 /content 下载，要带 key
+    // 有 video_url（AI派给的是 3 小时有效的签名地址，不用 key）就直接下，没有再从 /content 下（要带 key）
+    const direct = data?.video_url ?? d.video_url ?? data?.output?.video_url;
+    if (typeof direct === 'string' && /^https?:/.test(direct)) return { status: 'succeeded', outputs: [{ kind: 'video', url: direct, mime: 'video/mp4' }] };
     return { status: 'succeeded', outputs: [{ kind: 'video', url: `${url}/content`, mime: 'video/mp4', headers: { ...headers(ctx), Accept: 'video/mp4' } }] };
   }
   if (['failed', 'error', 'cancelled', 'canceled', 'expired'].includes(status)) {
@@ -265,6 +308,7 @@ export const relayAdapter: Adapter = {
 
   refLabel(kind, n, model) {
     if (model.protocol === 'ark-image' || model.protocol === 'ark-video') return `${kind === 'image' ? '图片' : kind === 'video' ? '视频' : '音频'}${n}`;
+    if (model.protocol === 'openai-videos' && isWan(model.remoteModel)) return `${kind === 'image' ? '图' : kind === 'video' ? '视频' : '音频'}${n}`; // Wan 认「视频1」「图1」
     if (model.protocol === 'openai-videos') return `${kind}_${n}`; // 和 content 里每项的 name 对上
     return `${kind} ${n}`;
   },

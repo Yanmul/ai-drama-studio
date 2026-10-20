@@ -119,6 +119,7 @@ export async function listModels(): Promise<ModelInfo[]> {
         providerName: p.name,
         name: m.name,
         capability: m.capability,
+        preset: m.preset,
         modes: preset.modes,
         params: preset.params,
         price: m.price,

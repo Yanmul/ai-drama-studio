@@ -94,6 +94,21 @@ export const PRESETS: Record<string, Preset> = {
     ],
   },
 
+  // —— 视频：Wan 3.0（AI派 wan-3.0-480p 等）——换人、换动作：参考视频给动作和镜头，参考图给人 ——
+  // 阿里官方限制：参考视频每段 1–15 秒、最多 5 段、合计 ≤15 秒，参考视频 + 输出 ≤30 秒；按「参考视频 + 输出」时长计费
+  'wan-video': {
+    label: 'Wan 3.0 视频（换人 / 换动作）',
+    modes: [
+      { id: 'omni', label: '参考生视频', maxRefs: { image: 10, video: 5, audio: 5 }, imageRoles: ['reference'] },
+      { id: 't2v', label: '文生视频', maxRefs: {} },
+    ],
+    params: [
+      { key: 'ratio', label: '比例', type: 'select', options: RATIOS_VIDEO, default: '16:9' },
+      { key: 'duration', label: '时长', type: 'select', options: [2, 3, 4, 5, 6, 8, 10, 12, 15], default: 5, unit: 's' },
+      { key: 'count', label: '条数', type: 'select', options: [1, 2], default: 1, unit: '个' },
+    ],
+  },
+
   // —— 视频：通用（自定义模板用） ——
   'generic-video': {
     label: '通用视频',

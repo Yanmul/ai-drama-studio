@@ -48,6 +48,7 @@ export interface ModelInfo {
   providerName: string;
   name: string;
   capability: Capability;
+  preset: string; // 参数预设 id（界面按它显示专属按钮，如 Wan 的「换人 / 换动作」）
   modes: ModeDef[];
   params: ParamDef[];
   price?: PriceRule;
