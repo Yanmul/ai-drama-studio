@@ -4930,6 +4930,9 @@ input.short {
   gap: 6px;
   color: var(--accent);
 }
+.hint.chain-hint.warn-hint {
+  color: var(--bad);
+}
 .hint.chain-hint .link {
   margin-left: auto;
   color: var(--text-3);

@@ -30,6 +30,34 @@ import { dropKind, useFileDrop } from '../useFileDrop';
 import { styleName } from './StylePicker';
 import { api, fileUrl } from '../api';
 
+/** 参考视频的时长（秒）：读一下视频的元数据，按文件缓存。读不出来的算 0 */
+const videoSecondsCache = new Map<string, number>();
+function useVideoSeconds(files: string[]): number[] | null {
+  const key = files.join('|');
+  const [, bump] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    for (const f of files) {
+      if (videoSecondsCache.has(f)) continue;
+      const v = document.createElement('video');
+      v.preload = 'metadata';
+      const done = (sec: number) => {
+        videoSecondsCache.set(f, sec);
+        v.removeAttribute('src');
+        if (alive) bump((n) => n + 1);
+      };
+      v.onloadedmetadata = () => done(Number.isFinite(v.duration) ? v.duration : 0);
+      v.onerror = () => done(0);
+      v.src = fileUrl(f);
+    }
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return files.every((f) => videoSecondsCache.has(f)) ? files.map((f) => videoSecondsCache.get(f)!) : null;
+}
+
 /** Wan 3.0 换人 / 换动作的提示词模板。@视频1 给动作和镜头，@图1 给人 */
 const SWAP_TEMPLATES = [
   {
@@ -112,6 +140,19 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
   const sources = srcIds.map((sid) => ({ id: sid, data: srcNodes.find((n) => n.id === sid)?.data as NodeData })).filter((s) => s.data);
   const { media, texts, chars } = collectInputs(sources, data.gen, mode);
   const textModel = models.find((m) => m.capability === 'text');
+  // Wan：参考视频也按秒收钱，还有时长上限（每段 1–15 秒、合计 ≤15 秒、参考 + 输出 ≤30 秒）
+  const isWan = model?.preset === 'wan-video';
+  const refVideoSecs = useVideoSeconds(isWan && mode?.id !== 't2v' ? media.filter((m) => m.kind === 'video').map((m) => m.file) : []);
+  const refVideoTotal = (refVideoSecs || []).reduce((a, b) => a + b, 0);
+  const wanProblem = !isWan || !refVideoSecs
+    ? ''
+    : refVideoSecs.some((x) => x > 15.5)
+      ? '有参考视频超过 15 秒，Wan 不收：先剪短'
+      : refVideoTotal > 15.5
+        ? `参考视频加起来 ${refVideoTotal.toFixed(1)} 秒，Wan 要求合计不超过 15 秒`
+        : refVideoTotal + (Number(params.duration) || 5) > 30.5
+          ? `参考视频 ${refVideoTotal.toFixed(1)} 秒 + 输出 ${params.duration} 秒超过 30 秒：把时长调短`
+          : '';
 
   const setGen = (patch: Partial<NodeData['gen']>) => updateNodeData(nodeId, { gen: { ...data.gen, ...patch } });
   /** 用户自己改了模型 / 参数 / 模式：改完顺便记住，之后新建的节点默认就用这一套 */
@@ -543,6 +584,12 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
           ))}
         </div>
       )}
+      {wanProblem && (
+        <div className="hint chain-hint warn-hint">
+          <Replace size={13} />
+          {wanProblem}
+        </div>
+      )}
       {data.chainPrev && (
         <div className="hint chain-hint">
           <Link2 size={13} />
@@ -707,8 +754,11 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
             </Popover>
           </span>
         )}
-        <span className="cost" title="按「模型管理」里填的单价估算">
-          <Zap size={13} /> {estimateCost(model, params)}
+        <span
+          className="cost"
+          title={isWan && refVideoTotal > 0 ? `按「模型管理」里填的单价估算；Wan 连参考视频一起收钱：输出 ${params.duration} 秒 + 参考视频 ${refVideoTotal.toFixed(1)} 秒` : '按「模型管理」里填的单价估算'}
+        >
+          <Zap size={13} /> {estimateCost(model, params, isWan ? refVideoTotal : 0)}
         </span>
         <button
           className="send"

@@ -16,6 +16,7 @@ import { openaiImageSize } from '../presets.js';
 import type { Adapter, AdapterContext, PollResult, PreparedRequest, SubmitResult } from './types.js';
 import { AdapterError, explainVendorError, httpJson, joinUrl } from './types.js';
 import { arkImage, arkVideoPoll, arkVideoSubmit, refUrl } from './volcengine.js';
+import { probe } from '../stitch.js';
 
 function headers(ctx: { apiKey: string }) {
   if (!ctx.apiKey) throw new AdapterError('还没有填 API key：去「模型管理」里填写');
@@ -144,6 +145,39 @@ function wanRefFields(items: { kind: 'image' | 'video' | 'audio'; url: string }[
   return f;
 }
 
+/** Wan 提交前检查（都在花钱之前）：
+ *  - 参考素材要公网地址，且这个地址此刻真的能打开——通道断了服务商不报错，会直接无视参考素材照样扣钱
+ *  - 参考视频（阿里官方限制）：每段 1–15 秒、合计 ≤15 秒、参考 + 输出 ≤30 秒、帧率 ≥16、单个 ≤100MB */
+async function wanPrecheck(ctx: AdapterContext, refs: PreparedRequest['refs'], duration: number) {
+  if (!refs.length) return;
+  if (ctx.provider.refMode !== 'public' || !ctx.provider.publicBaseUrl) {
+    throw new AdapterError('Wan 的参考素材要用公网地址：去「模型管理」把这个服务商的参考素材方式改成「公网地址」，并填上通道地址');
+  }
+  const first = await refUrl(ctx, refs[0]);
+  try {
+    const r = await fetch(first, { method: 'HEAD', signal: AbortSignal.timeout(10_000) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  } catch (e) {
+    throw new AdapterError(`公网通道打不开（${(e as Error).message}）：服务商拿不到参考素材，会无视它们照样扣钱，所以先没提交。检查临时通道是否还开着、地址变了没有（模型管理 → 公网地址）`);
+  }
+  const videos = refs.filter((r) => r.kind === 'video');
+  let total = 0;
+  for (const [i, r] of videos.entries()) {
+    const name = `视频${i + 1}`;
+    const abs = absFromRel(r.file);
+    const st = await fs.stat(abs).catch(() => null);
+    if (!st) throw new AdapterError(`${name} 的文件找不到了：重新上传一次`);
+    if (st.size > 100 * 1024 * 1024) throw new AdapterError(`${name} 超过 100MB，Wan 不收：剪短或压缩一下`);
+    const pr = await probe(abs).catch(() => null);
+    if (!pr) throw new AdapterError(`${name} 读不出来，可能不是正常的视频文件：换成 mp4 / mov`);
+    if (pr.duration < 1 || pr.duration > 15.5) throw new AdapterError(`${name} 有 ${pr.duration.toFixed(1)} 秒，Wan 要求每段参考视频 1–15 秒：先剪一下`);
+    if (pr.fps && pr.fps < 15.5) throw new AdapterError(`${name} 帧率只有 ${pr.fps.toFixed(0)}，Wan 要求至少 16 帧/秒`);
+    total += pr.duration;
+  }
+  if (total > 15.5) throw new AdapterError(`参考视频加起来 ${total.toFixed(1)} 秒，Wan 要求合计不超过 15 秒：去掉一段或剪短`);
+  if (total + duration > 30.5) throw new AdapterError(`参考视频 ${total.toFixed(1)} 秒 + 输出 ${duration} 秒超过 30 秒（Wan 的上限）：把时长调短`);
+}
+
 async function openaiVideosSubmit(ctx: AdapterContext, req: PreparedRequest): Promise<SubmitResult> {
   const p = req.params;
   const model = ctx.model.remoteModel;
@@ -170,6 +204,7 @@ async function openaiVideosSubmit(ctx: AdapterContext, req: PreparedRequest): Pr
   if (p.seed !== undefined && Number(p.seed) >= 0) body.seed = Number(p.seed);
   // 参考素材放在顶层 content 数组里，每项一个唯一 name；提示词里的 @图1 已经换成同名的 image_1
   const refs = req.mode === 't2v' ? [] : req.refs;
+  if (isWan(model)) await wanPrecheck(ctx, refs, duration);
   if (refs.length && isWan(model)) {
     const items = [];
     for (const r of refs) items.push({ kind: r.kind, url: await refUrl(ctx, r) });
@@ -194,8 +229,13 @@ async function openaiVideosSubmit(ctx: AdapterContext, req: PreparedRequest): Pr
   try {
     data = await httpJson<any>(joinUrl(base(ctx), 'video/generations'), { headers: headers(ctx), body, timeoutMs: 120_000 });
   } catch (e) {
-    if (!/\b(404|405)\b/.test(String((e as Error)?.message))) throw e;
-    data = await httpJson<any>(joinUrl(base(ctx), 'videos'), { headers: headers(ctx), body, timeoutMs: 120_000 });
+    // 只有「这个地址不存在」才换地址重试；换了还不行就报第一次的错（AI派的 /videos 只会报跳转循环，没参考价值）
+    if (!/HTTP 40[45]：/.test(String((e as Error)?.message))) throw e;
+    try {
+      data = await httpJson<any>(joinUrl(base(ctx), 'videos'), { headers: headers(ctx), body, timeoutMs: 120_000 });
+    } catch {
+      throw e;
+    }
   }
   const id = data?.id ?? data?.data?.id ?? (typeof data?.data === 'string' ? data.data : undefined) ?? data?.task_id;
   if (!id) throw new AdapterError(`中转站没有返回任务号：${JSON.stringify(data).slice(0, 300)}`);

@@ -10,7 +10,9 @@ import { ADAPTERS, apiKeyOf, resolveModel } from './providers/index.js';
 import type { AdapterContext, PreparedRequest, RemoteOutput } from './providers/types.js';
 import { AdapterError } from './providers/types.js';
 import { buildPrompt } from './prompt.js';
+import { probe } from './stitch.js';
 import {
+  absFromRel,
   ensureDir,
   extFromMime,
   listDirs,
@@ -79,6 +81,14 @@ export async function enqueue(req: GenerateRequest): Promise<Job[]> {
       createdAt: nowIso(),
     };
     job.cost = estimateCost(job, model.price);
+    // Wan 连参考视频的时长一起收钱
+    if (job.cost !== undefined && model.preset === 'wan-video' && model.price?.unit === 'per_second' && req.mode !== 't2v') {
+      for (const r of req.refs.filter((x) => x.kind === 'video')) {
+        const pr = await probe(absFromRel(r.file)).catch(() => null);
+        if (pr) job.cost += model.price.amount * pr.duration;
+      }
+      job.cost = Math.round(job.cost * 100) / 100;
+    }
     job.costEstimated = job.cost !== undefined;
     await persist(job);
     queuedIds.add(job.id);

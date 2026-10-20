@@ -116,18 +116,19 @@ export function buildRequest(
 }
 
 /** 预估花费（元）；模型没填单价返回 undefined */
-export function estimateCostNumber(model: ModelInfo | undefined, raw: Record<string, unknown>): number | undefined {
+/** extraSeconds：按秒计费时额外要算的秒数（Wan 连参考视频的时长一起收钱） */
+export function estimateCostNumber(model: ModelInfo | undefined, raw: Record<string, unknown>, extraSeconds = 0): number | undefined {
   const pr = model?.price;
   if (!pr) return undefined;
   const params = { ...defaultParams(model), ...raw };
   let n = pr.amount;
-  if (pr.unit === 'per_second') n = pr.amount * (Number(params.duration) || 5) * (model?.capability === 'video' ? Number(params.count) || 1 : 1);
+  if (pr.unit === 'per_second') n = pr.amount * ((Number(params.duration) || 5) + extraSeconds) * (model?.capability === 'video' ? Number(params.count) || 1 : 1);
   if (pr.unit === 'per_image') n = pr.amount * (Number(params.count) || 1);
   if (pr.unit === 'per_call' && model?.capability === 'video') n = pr.amount * (Number(params.count) || 1);
   return n;
 }
 
-export function estimateCost(model: ModelInfo | undefined, params: Record<string, unknown>): string {
-  const n = estimateCostNumber(model, params);
+export function estimateCost(model: ModelInfo | undefined, params: Record<string, unknown>, extraSeconds = 0): string {
+  const n = estimateCostNumber(model, params, extraSeconds);
   return n === undefined ? '—' : `¥${n.toFixed(2)}`;
 }

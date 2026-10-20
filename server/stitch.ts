@@ -7,11 +7,12 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { absFromRel, ensureDir, nowIso, paths, rel, writeJson } from './storage.js';
 
-interface Probe {
+export interface Probe {
   duration: number;
   width: number;
   height: number;
   hasAudio: boolean;
+  fps: number;
 }
 
 function run(cmd: string, args: string[]): Promise<{ code: number; out: string; err: string }> {
@@ -31,8 +32,8 @@ function run(cmd: string, args: string[]): Promise<{ code: number; out: string; 
   });
 }
 
-async function probe(file: string): Promise<Probe> {
-  const r = await run('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,width,height:format=duration', '-of', 'json', file]);
+export async function probe(file: string): Promise<Probe> {
+  const r = await run('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,width,height,avg_frame_rate:format=duration', '-of', 'json', file]);
   if (r.code !== 0) throw new Error(`读不了这个视频：${path.basename(file)}`);
   const j = JSON.parse(r.out || '{}');
   const v = (j.streams || []).find((s: any) => s.codec_type === 'video');
@@ -42,6 +43,10 @@ async function probe(file: string): Promise<Probe> {
     width: Number(v.width) || 0,
     height: Number(v.height) || 0,
     hasAudio: (j.streams || []).some((s: any) => s.codec_type === 'audio'),
+    fps: (() => {
+      const [a, b] = String(v.avg_frame_rate || '0/1').split('/').map(Number);
+      return b ? a / b : 0;
+    })(),
   };
 }
 
