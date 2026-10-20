@@ -164,26 +164,50 @@ export interface SettingMatch {
 /**
  * 规则：
  * 1. 台词（"…" “…” 「…」里）不算——林骁说「苏婉啊」不代表苏婉在镜头里；
- * 2. 长名字先匹配：「老周办公室」里的「老周」不再单独算；
- * 3. 少于 2 个字的名字不匹配（误伤太多）；
- * 4. 设定有多张图时，提示词里出现了哪张图的备注（如「傍晚」）就用哪张。
+ * 2. 名字后面紧跟「（画外」的不算——只有声音，人不在画面里；
+ * 3. skill 格式的提示词（有「场景：」「第一个可见帧已包含」）按结构认：
+ *    场景只在「场景：画风；地点，时段，光线；」的地点段里认（别处顺带提到的地名不算），
+ *    角色 / 道具只认「第一个可见帧已包含 …」那句里列出的（画面里真有的）；
+ *    不是这种格式的，全文找；
+ * 4. 长名字先匹配：「老周办公室」里的「老周」不再单独算；少于 2 个字的名字不匹配；
+ * 5. 设定有多张图时，提示词里出现了哪张图的备注（如「傍晚」）就用哪张。
  */
 export function matchSettings(prompt: string, settings: Character[]): SettingMatch[] {
   // 台词、已插入的 @标记 用同长度空白盖住，位置不变
   const masked = prompt.replace(/"[^"]*"|“[^”]*”|「[^」]*」|（@[^）]*）|@(图|视频|音频)\d+/g, (m) => ' '.repeat(m.length));
+  // —— 结构化区域 ——
+  let sceneZone: [number, number] | null = null; // 「场景：画风；【地点段】；…」
+  const sm = /场景：[^；;\n]*[；;]([^；;\n]*)/.exec(masked);
+  if (sm) {
+    const start = sm.index + sm[0].length - sm[1].length;
+    sceneZone = [start, start + sm[1].length];
+  }
+  let frameZone: [number, number] | null = null; // 「第一个可见帧已包含 …。」
+  const fm = /第一个可见帧已(?:经)?包含([^。\n]*)/.exec(masked);
+  if (fm) frameZone = [fm.index, fm.index + fm[0].length];
+  const inZone = (z: [number, number] | null, a: number, b: number) => !z || (a >= z[0] && b <= z[1]);
+
   const covered: [number, number][] = [];
   const inCovered = (a: number, b: number) => covered.some(([x, y]) => a < y && b > x);
   const out: SettingMatch[] = [];
   const sorted = settings.filter((c) => c.name && c.name.trim().length >= 2).sort((a, b) => b.name.length - a.name.length);
   for (const c of sorted) {
     const name = c.name.trim();
+    const isScene = settingKind(c) === 'scene';
+    // 场景按地点段认；角色 / 道具按首帧声明认；没有对应结构就全文
+    const zone = isScene ? sceneZone : frameZone;
     let first = -1;
+    let inside = false;
     for (let i = masked.indexOf(name); i >= 0; i = masked.indexOf(name, i + 1)) {
-      if (inCovered(i, i + name.length)) continue;
-      if (first < 0) first = i;
-      covered.push([i, i + name.length]);
+      const end = i + name.length;
+      if (inCovered(i, end)) continue;
+      covered.push([i, end]);
+      if (masked.startsWith('（画外', end)) continue;
+      if (inZone(zone, i, end)) inside = true;
+      // 标记插在第一次出现的地方（场景插在地点段里）
+      if (first < 0 && (!isScene || inZone(zone, i, end))) first = i;
     }
-    if (first < 0) continue;
+    if (!inside || first < 0) continue;
     const imgs = settingImages(c);
     const noted = imgs.filter((im) => im.note && masked.includes(im.note)).sort((a, b) => (b.note || '').length - (a.note || '').length);
     out.push({ setting: c, image: noted[0] || imgs[0], index: first });
