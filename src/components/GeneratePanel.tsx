@@ -211,19 +211,26 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
       if (!silent) toast('提示词里没有找到设定库里的名字（台词里的不算）', 'error');
       return;
     }
+    // 同一个设定的节点就算同一个——画布上换过版本、重新生成过也认；
+    // 只有提示词点名了某个变体（如「傍晚」）而这个节点明确是别的变体时才不算
+    const sameAs = (n: Node<NodeData> | undefined, m: (typeof matches)[number]) => {
+      if (!n || n.data.characterId !== m.setting.id) return false;
+      const want = m.image?.note;
+      if (!want) return true;
+      const v = activeVersion(n.data);
+      return v?.file === m.image?.file || v?.variant === want || n.data.title.includes(want);
+    };
     const before = { prompt: text, mode: data.gen.mode, autoLinked: data.autoLinked };
     // 上次智能引用自动连的图，这次提示词里没提到了 → 断开（手动连的不动）
     const prevAuto = (data.autoLinked as string[] | undefined) || [];
     const keepIds = new Set<string>();
     for (const m of matches) {
-      const hit = (getNodes() as Node<NodeData>[]).find((n) => n.id !== nodeId && n.data.characterId === m.setting.id && (!m.image || activeVersion(n.data)?.file === m.image.file));
+      const hit = (getNodes() as Node<NodeData>[]).find((n) => n.id !== nodeId && sameAs(n, m));
       if (hit) keepIds.add(hit.id);
     }
     const staleEdges = getEdges().filter((e) => e.target === nodeId && prevAuto.includes(e.source) && !keepIds.has(e.source));
     if (staleEdges.length) deleteElements({ edges: staleEdges.map((e) => ({ id: e.id })) });
     const srcIds = getEdges().filter((e) => e.target === nodeId && !staleEdges.some((x) => x.id === e.id)).map((e) => e.source);
-    const sameAs = (n: Node<NodeData> | undefined, m: (typeof matches)[number]) =>
-      Boolean(n && n.data.characterId === m.setting.id && (!m.image || activeVersion(n.data)?.file === m.image.file));
     const sources = srcIds.map((id) => ({ id, data: getNode(id)?.data as NodeData })).filter((x) => x.data);
     const createdNodes: string[] = [];
     const newEdgeIds: string[] = [];
