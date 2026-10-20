@@ -4963,3 +4963,40 @@ input.short {
 .cut-progress-bar span.fail {
   background: var(--bad);
 }
+
+/* 添加菜单里的设定库子菜单：缩略图小图显示，整个子菜单不超过屏幕高度 */
+.am-sub {
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+}
+.am-sub .am-row img,
+.am-sub .am-row .thumb-empty {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--surface-4);
+}
+.am-sub .am-row span:not(.muted):not(.thumb-empty) {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.am-sub .am-row .muted {
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.am-sub .setting-picker {
+  max-height: none;
+  overflow: visible;
+}
+.am-sub .sp-variants {
+  padding: 0 8px 6px 46px;
+}
+.am-sub .sp-variant img {
+  width: 40px;
+  height: 40px;
+}

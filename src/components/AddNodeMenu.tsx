@@ -1,5 +1,5 @@
 // 「添加节点」菜单（参考 LibTV 截图一）：双击 / 右键画布空白处，或从节点拖线到空白处时弹出。
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronRight, ClipboardList, Clock, FileText, Image as ImageIcon, Music, Search, ScrollText, Shapes, Upload, Video, Film } from 'lucide-react';
 import type { NodeKind } from '../../shared/types';
 import { fileUrl } from '../api';
@@ -29,6 +29,17 @@ export function AddNodeMenu({ x, y, onPick, onClose }: { x: number; y: number; o
   const [q, setQ] = useState('');
   const [sub, setSub] = useState<'' | 'script' | 'library'>('');
   const ref = useRef<HTMLDivElement>(null);
+  // 子菜单（脚本 / 设定库）：靠近屏幕底部时往上挪，别跑出屏幕
+  const subRef = useRef<HTMLDivElement>(null);
+  const [subShift, setSubShift] = useState(0);
+  useLayoutEffect(() => {
+    setSubShift(0);
+    const el = subRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const over = r.bottom - (window.innerHeight - 12);
+    if (over > 0) setSubShift(-Math.min(over, Math.max(0, r.top - 12)));
+  }, [sub]);
 
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -82,7 +93,7 @@ export function AddNodeMenu({ x, y, onPick, onClose }: { x: number; y: number; o
             {i.sub && <ChevronRight size={15} className="am-arrow" />}
           </button>
           {sub === i.sub && i.sub === 'script' && (
-            <div className="am-sub">
+            <div className="am-sub" ref={subRef} style={{ transform: subShift ? `translateY(${subShift}px)` : undefined }}>
               <button className="am-row" onClick={() => onPick({ kind: 'script', title: '脚本', text: SCRIPT_TEMPLATE })}>
                 空白脚本
               </button>
@@ -98,7 +109,7 @@ export function AddNodeMenu({ x, y, onPick, onClose }: { x: number; y: number; o
             </div>
           )}
           {sub === i.sub && i.sub === 'library' && (
-            <div className="am-sub">
+            <div className="am-sub" ref={subRef} style={{ transform: subShift ? `translateY(${subShift}px)` : undefined }}>
               <SettingPicker
                 settings={characters}
                 rowClass="am-row"
