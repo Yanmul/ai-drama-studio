@@ -249,8 +249,16 @@ export function batchProgress(batch: EpisodeBatch, jobs: Job[], dataOf: (id: str
   // 等着接尾帧、但上一条失败了 / 没提交上 → 接不上了
   for (const id of batch.clips) {
     const prev = dataOf(id)?.chainPrev;
-    const ps = prev ? state.get(prev) : undefined;
-    if (state.get(id) === 'waiting' && (ps === 'failed' || ps === 'blocked' || ps === 'skipped')) state.set(id, 'blocked');
+    if (state.get(id) !== 'waiting' || !prev) continue;
+    let ps = state.get(prev);
+    if (!ps) {
+      // 上一条不在这次整集里（取消勾选了 / 开始时已经在生成）：它有视频、或正在生成就接着等，否则接不上
+      const pd = dataOf(prev);
+      const hasVideo = Boolean(pd && pd.versions?.[pd.current]?.kind === 'video');
+      const active = jobs.some((j) => j.request.nodeId === prev && (j.status === 'queued' || j.status === 'running'));
+      ps = hasVideo || active ? 'running' : 'skipped';
+    }
+    if (ps === 'failed' || ps === 'blocked' || ps === 'skipped') state.set(id, 'blocked');
   }
   const count = (s: ClipState) => [...state.values()].filter((x) => x === s).length;
   const r = {

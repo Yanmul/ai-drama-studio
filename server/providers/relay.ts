@@ -168,7 +168,10 @@ async function wanPrecheck(ctx: AdapterContext, refs: PreparedRequest['refs'], d
     const st = await fs.stat(abs).catch(() => null);
     if (!st) throw new AdapterError(`${name} 的文件找不到了：重新上传一次`);
     if (st.size > 100 * 1024 * 1024) throw new AdapterError(`${name} 超过 100MB，Wan 不收：剪短或压缩一下`);
-    const pr = await probe(abs).catch(() => null);
+    const pr = await probe(abs).catch((e) => {
+      if ((e as any)?.code === 'ENOENT') throw new AdapterError('本机没装 ffmpeg，没法检查参考视频的时长：先装上（mac 上 brew install ffmpeg）');
+      return null;
+    });
     if (!pr) throw new AdapterError(`${name} 读不出来，可能不是正常的视频文件：换成 mp4 / mov`);
     if (pr.duration < 1 || pr.duration > 15.5) throw new AdapterError(`${name} 有 ${pr.duration.toFixed(1)} 秒，Wan 要求每段参考视频 1–15 秒：先剪一下`);
     if (pr.fps && pr.fps < 15.5) throw new AdapterError(`${name} 帧率只有 ${pr.fps.toFixed(0)}，Wan 要求至少 16 帧/秒`);

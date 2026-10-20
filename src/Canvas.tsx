@@ -604,6 +604,8 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
   const activeOf = (nodeId: string) =>
     jobsRef.current.filter((j) => j.request.nodeId === nodeId && j.request.episodeId === episode.id && (j.status === 'queued' || j.status === 'running')).length;
 
+  // 正在提交（请求还没回来）的节点：整集生成据此跳过，免得和「不接了」同时提交同一条、扣两次钱
+  const submitting = useRef(new Set<string>());
   const submit = useCallback(
     async (nodeId: string, opts: { skipBusyCheck?: boolean; quiet?: boolean; skipMissingCheck?: boolean } = {}) => {
       const n = rf.getNode(nodeId) as FlowNode | undefined;
@@ -662,6 +664,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
         toast(`「${n.data.title}」还没有提示词：先写点提示词，或者连一个文本节点进来`, 'error');
         return false;
       }
+      submitting.current.add(nodeId);
       try {
         const created = await api.generate(req);
         app.setJobs((prev) => [...created, ...prev.filter((p) => !created.some((c) => c.id === p.id))]);
@@ -670,6 +673,8 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       } catch (e: any) {
         toast(e.message, 'error');
         return false;
+      } finally {
+        submitting.current.delete(nodeId);
       }
     },
     [models, project.id, episode.id],
@@ -938,6 +943,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           if (cur.data.autoRun) {
             // 整集生成里等着的：尾帧连上了就自动开始。提交完再清 autoRun，中间不会被算成「没提交上」
             setTimeout(async () => {
+              if (!(rf.getNode(n.id) as FlowNode | undefined)?.data.autoRun) return; // 这 0.3 秒里点了「停止」
               await submitRef.current(n.id, { skipBusyCheck: true, quiet: true, skipMissingCheck: true });
               rf.updateNodeData(n.id, { autoRun: undefined });
             }, 300);
@@ -1000,6 +1006,9 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
           waiting += 1;
           continue;
         }
+        // 中途点了「停止」、或这条已经被「不接了」提交过：不再提交
+        if (!(rf.getNode(id) as FlowNode | undefined)?.data.autoRun) continue;
+        if (submitting.current.has(id) || activeOf(id)) continue; // 「不接了」已经提交了它（标记由那边清）
         if (await submit(id, { skipBusyCheck: true, quiet: true, skipMissingCheck: true })) sent += 1;
         else failed += 1;
         rf.updateNodeData(id, { autoRun: undefined });
