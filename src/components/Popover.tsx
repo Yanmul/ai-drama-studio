@@ -31,6 +31,8 @@ export function Popover({
     // Esc 在捕获阶段听：生成面板会拦住按键往外传，冒泡阶段收不到
     const k = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      // 上面还盖着别的确认框（不是包着这个下拉框的那个）：这次 Esc 归确认框
+      if ([...document.querySelectorAll('.dialog-mask')].some((m) => !m.contains(ref.current))) return;
       e.stopPropagation();
       closeRef.current();
     };

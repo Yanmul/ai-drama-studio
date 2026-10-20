@@ -170,8 +170,18 @@ export interface SettingMatch {
  *    角色 / 道具只认「第一个可见帧已包含 …」那句里列出的（画面里真有的）；
  *    不是这种格式的，全文找；
  * 4. 长名字先匹配：「老周办公室」里的「老周」不再单独算；少于 2 个字的名字不匹配；
- * 5. 设定有多张图时，提示词里出现了哪张图的备注（如「傍晚」）就用哪张。
+ * 5. 设定有多张图时，名字所在那一句（场景看地点 / 时段段）里出现了哪张图的备注（如「傍晚」）就用哪张。
  */
+/** 第 i 个字所在的那一句（按 。；！？ 和换行切） */
+function sentenceAt(text: string, i: number): string {
+  const stops = /[。；;！？!?\n]/;
+  let a = i;
+  while (a > 0 && !stops.test(text[a - 1])) a -= 1;
+  let b = i;
+  while (b < text.length && !stops.test(text[b])) b += 1;
+  return text.slice(a, b);
+}
+
 export function matchSettings(prompt: string, settings: Character[]): SettingMatch[] {
   // 台词、已插入的 @标记 用同长度空白盖住，位置不变
   const masked = prompt.replace(/"[^"]*"|“[^”]*”|「[^」]*」|（@[^）]*）|@(图|视频|音频)\d+/g, (m) => ' '.repeat(m.length));
@@ -208,8 +218,11 @@ export function matchSettings(prompt: string, settings: Character[]): SettingMat
       if (first < 0 && (!isScene || inZone(zone, i, end))) first = i;
     }
     if (!inside || first < 0) continue;
+    // 变体（图的备注）只在名字附近找：场景看「场景：」的地点 / 时段段，其他看名字所在的那一句。
+    // 全文找的话，别处随便出现一个「夜」字就会选错图
     const imgs = settingImages(c);
-    const noted = imgs.filter((im) => im.note && masked.includes(im.note)).sort((a, b) => (b.note || '').length - (a.note || '').length);
+    const near = isScene && sceneZone ? masked.slice(sceneZone[0], sceneZone[1]) : sentenceAt(masked, first);
+    const noted = imgs.filter((im) => im.note && near.includes(im.note)).sort((a, b) => (b.note || '').length - (a.note || '').length);
     out.push({ setting: c, image: noted[0] || imgs[0], index: first });
   }
   return out.sort((a, b) => a.index - b.index);

@@ -8,6 +8,7 @@ export interface MediaInput {
   title: string;
   file: string;
   characterId?: string;
+  refName?: string;
   /** 设定的哪一张图（备注） */
   variant?: string;
   /** 在提示词里的叫法：@图1 / @视频1 / @音频1 */
@@ -59,6 +60,7 @@ export function collectInputs(
       title: d.title,
       file: v.file,
       characterId: d.characterId,
+      refName: d.characterId ? undefined : d.refName,
       variant: d.characterId ? v.variant : undefined,
       token: `@${TOKEN[kind]}${count[kind]}`,
       role: 'reference',
@@ -101,7 +103,7 @@ export function buildRequest(
     mode: mode?.id || 'default',
     prompt: data.gen.prompt || '',
     inputTexts,
-    refs: usable.map((m) => ({ nodeId: m.nodeId, kind: m.kind, file: m.file, role: m.role, characterId: m.characterId, variant: m.variant })),
+    refs: usable.map((m) => ({ nodeId: m.nodeId, kind: m.kind, file: m.file, role: m.role, characterId: m.characterId, refName: m.refName, variant: m.variant })),
     // 没有定妆图的角色，以及被模式限制用不上的角色图，都至少把外形描述带上
     characterIds: [
       ...chars.map((c) => c.characterId),

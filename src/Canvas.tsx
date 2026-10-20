@@ -570,7 +570,7 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       if (!n) continue;
       for (const e of rf.getEdges().filter((x) => x.target === id)) {
         const s = rf.getNode(e.source) as FlowNode | undefined;
-        if (!s?.data.characterId || activeVersion(s.data)?.file) continue;
+        if (!(s?.data.characterId || s?.data.refName) || activeVersion(s.data)?.file) continue;
         const name = s.data.title.replace(/（.*$/, '').trim();
         out.set(name, [...(out.get(name) || []), n.data.title]);
       }
@@ -777,10 +777,25 @@ export function Canvas({ project, episode }: { project: Project; episode: Episod
       const assetOf = new Map<string, string>();
       const missing: string[] = [];
       const noImage: string[] = [];
+      // 名字匹配要严：完全同名，或者「名字·变体」（变体按图片备注挑图）。
+      // 不做模糊包含——「老周办公室」不能配成角色「老周」的图，「苏婉」也不能配成「苏婉的卧室」
+      const SEP = /^[·・\-—－\s（(]/;
+      const findSetting = (name: string) => {
+        const exact = characters.find((x) => x.name.trim() === name);
+        if (exact) return { c: exact, variant: '' };
+        const byPrefix = characters
+          .filter((x) => x.name.trim() && name.startsWith(x.name.trim()) && SEP.test(name.slice(x.name.trim().length)))
+          .sort((a, b) => b.name.length - a.name.length)[0];
+        if (byPrefix) return { c: byPrefix, variant: name.slice(byPrefix.name.trim().length).replace(/^[·・\-—－\s（(]+|[）)]+$/g, '').trim() };
+        return undefined;
+      };
       names.forEach((name, i) => {
-        const c = characters.find((x) => x.name === name) || characters.find((x) => name.includes(x.name) || x.name.includes(name));
-        const img = c ? settingImages(c)[0] : undefined;
-        const data = makeNodeData('image', c ? `${c.name}（${SETTING_WORD[settingKind(c)]}）` : `${name}（待补图）`, models, project, { characterId: c?.id });
+        const hit = findSetting(name);
+        const c = hit?.c;
+        const imgs = c ? settingImages(c) : [];
+        const img = (hit?.variant && imgs.find((x) => x.note && (x.note.includes(hit.variant) || hit.variant.includes(x.note)))) || imgs[0];
+        const label = c ? `${c.name}${hit?.variant ? ` · ${hit.variant}` : ''}（${SETTING_WORD[settingKind(c)]}）` : `${name}（待补图）`;
+        const data = makeNodeData('image', label, models, project, c ? { characterId: c.id } : { refName: name });
         if (img) {
           data.versions = [{ id: newId('v_'), kind: 'image', file: img.file, label: '设定库', variant: img.note || undefined, createdAt: new Date().toISOString() }];
           data.current = 0;

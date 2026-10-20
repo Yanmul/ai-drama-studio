@@ -33,6 +33,8 @@ export async function buildPrompt(req: GenerateRequest, adapter: Adapter, model:
     if (r.characterId) {
       const c = await loadCharacter(req.projectId, r.characterId);
       if (c) characterLines.push(`${label}是${KIND_WORD[c.kind || 'character']}「${c.name}」${r.variant ? `（${r.variant}）` : ''}${c.description ? `：${c.description}` : ''}`);
+    } else if (r.refName) {
+      characterLines.push(`${label}是「${r.refName}」`);
     }
   }
   for (const cid of req.characterIds || []) {

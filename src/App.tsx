@@ -67,6 +67,18 @@ export function App() {
     api.styles().then(setStyles).catch((e) => toast(`读取风格库失败：${e.message}`, 'error'));
   }, []);
   useEffect(() => refreshStyles(), []);
+  // 兜底：文件拖到没有上传区的地方（弹窗边上、上传中）松手，浏览器默认会打开这个文件、离开页面，没保存的都丢了
+  useEffect(() => {
+    const guard = (e: DragEvent) => {
+      if (e.dataTransfer?.types?.includes('Files')) e.preventDefault();
+    };
+    window.addEventListener('dragover', guard);
+    window.addEventListener('drop', guard);
+    return () => {
+      window.removeEventListener('dragover', guard);
+      window.removeEventListener('drop', guard);
+    };
+  }, []);
 
   const refreshCharacters = useCallback(() => {
     if (project) api.characters(project.id).then(setCharacters).catch((e) => toast(e.message, 'error'));

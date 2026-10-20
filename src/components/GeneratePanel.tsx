@@ -290,7 +290,8 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
       const hit = (getNodes() as Node<NodeData>[]).find((n) => n.id !== nodeId && sameAs(n, m));
       if (hit) keepIds.add(hit.id);
     }
-    const staleEdges = getEdges().filter((e) => e.target === nodeId && prevAuto.includes(e.source) && !keepIds.has(e.source));
+    // 粘贴时自动跑的（silent）只加不删：断开只在手动点「智能引用」时做，免得粘贴一下图就少了
+    const staleEdges = silent ? [] : getEdges().filter((e) => e.target === nodeId && prevAuto.includes(e.source) && !keepIds.has(e.source));
     if (staleEdges.length) deleteElements({ edges: staleEdges.map((e) => ({ id: e.id })) });
     const srcIds = getEdges().filter((e) => e.target === nodeId && !staleEdges.some((x) => x.id === e.id)).map((e) => e.source);
     const sources = srcIds.map((id) => ({ id, data: getNode(id)?.data as NodeData })).filter((x) => x.data);
@@ -336,11 +337,15 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
     for (const m of [...matches].sort((a, b) => b.index - a.index)) {
       const tok = tokenOf.get(nodeOf.get(m.setting.id) || '');
       const end = m.index + m.setting.name.trim().length;
-      if (!tok || /^（@/.test(next.slice(end))) continue;
-      next = `${next.slice(0, end)}（${tok}）${next.slice(end)}`;
+      if (!tok) continue;
+      // 名字后面已经标过（@图N）的换成现在的编号（断开了别的图以后编号会变）
+      const old = next.slice(end).match(/^（@[^）]*）/);
+      next = `${next.slice(0, end)}（${tok}）${next.slice(end + (old ? old[0].length : 0))}`;
     }
     // 记下哪些是自动连的：这次新连的 + 上次自动连、这次还用得上的
-    const autoLinked = [...new Set(nodeOf.values())].filter((id) => linkedNow.has(id) || prevAuto.includes(id));
+    const autoLinked = [...new Set([...nodeOf.values(), ...(silent ? prevAuto.filter((id) => srcIds.includes(id)) : [])])].filter(
+      (id) => linkedNow.has(id) || prevAuto.includes(id),
+    );
     setPromptLocal(next);
     updateNodeData(nodeId, { gen: { ...data.gen, prompt: next, mode: nextMode?.id || data.gen.mode }, autoLinked });
     const names = matches.map((m) => m.setting.name).join('、');
@@ -458,9 +463,17 @@ export function GeneratePanel({ nodeId, data }: { nodeId: string; data: NodeData
                       className="list-item"
                       title={t.text}
                       onClick={() => {
-                        setPrompt(t.text);
-                        if (mode?.id !== 'omni' && model.modes.some((m) => m.id === 'omni')) setGen({ mode: 'omni', prompt: t.text });
+                        // 按实际连进来的素材填编号：图1 可能已经被场景图、尾帧占了
+                        const vids = media.filter((m) => m.kind === 'video');
+                        const imgs = media.filter((m) => m.kind === 'image' && m.nodeId !== data.firstFrame);
+                        const person = imgs.find((m) => m.characterId) || imgs[imgs.length - 1];
+                        const text = t.text.replaceAll('@视频1', vids[0]?.token || '@视频1').replaceAll('@图1', person?.token || '@图1');
+                        setPrompt(text);
+                        if (mode?.id !== 'omni' && model.modes.some((m) => m.id === 'omni')) setGen({ mode: 'omni', prompt: text });
                         setPop('');
+                        if (!vids.length || !person) toast('还要连一段参考视频（动作）和一张人物图，模板里的 @视频1 / @图1 才有东西可指', 'error');
+                        else if (vids.length > 1 || imgs.length > 1)
+                          toast(`连了 ${vids.length} 段视频、${imgs.length} 张图：模板用的是${vids[0].token}（${vids[0].title}）和${person.token}（${person.title}），不对就改一下`);
                       }}
                     >
                       {t.label}<span className="muted">　{t.tip}</span>

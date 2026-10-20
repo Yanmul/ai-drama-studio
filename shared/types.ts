@@ -121,6 +121,8 @@ export interface RefInput {
   file: string; // 工作文件夹里的相对路径
   role: RefRole;
   characterId?: string;
+  /** 设定库里没有、只知道名字的参考（导入分镜的「待补图」） */
+  refName?: string;
   /** 用的是设定的哪张图（图的备注，比如「校服」），会带进提示词 */
   variant?: string;
 }
@@ -213,6 +215,8 @@ export interface NodeData {
   text?: string;
   /** 从角色库拖进来的图片节点 */
   characterId?: string;
+  /** 导入分镜时设定库里没找到的名字（「待补图」节点）：补了图以后提示词里写「图N是XXX」，缺图检查也认它 */
+  refName?: string;
   /** 运行状态（不存盘也行，存了方便刷新后看到） */
   run?: { status: JobStatus; jobIds: string[]; error?: string };
   /** 这个节点生成时不带项目画风（比如做白底参考图） */
